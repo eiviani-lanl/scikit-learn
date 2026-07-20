@@ -18,12 +18,11 @@ from sklearn.base import BaseEstimator, ClassifierMixin, _fit_context
 from sklearn.preprocessing import LabelBinarizer, binarize, label_binarize
 from sklearn.utils._array_api import (
     _average,
-    _convert_to_numpy,
     _find_matching_floating_dtype,
-    _isin,
     _logsumexp,
     get_namespace,
     get_namespace_and_device,
+    move_to,
     size,
 )
 from sklearn.utils._param_validation import Interval
@@ -113,7 +112,7 @@ class _BaseNB(ClassifierMixin, BaseEstimator, metaclass=ABCMeta):
         jll = self._joint_log_likelihood(X)
         pred_indices = xp.argmax(jll, axis=1)
         if isinstance(self.classes_[0], str):
-            pred_indices = _convert_to_numpy(pred_indices, xp=xp)
+            pred_indices = move_to(pred_indices, xp=np, device="cpu")
         return self.classes_[pred_indices]
 
     def predict_log_proba(self, X):
@@ -493,7 +492,7 @@ class GaussianNB(_BaseNB):
         classes = self.classes_
 
         unique_y = xp_y.unique_values(y)
-        unique_y_in_classes = _isin(unique_y, classes, xp=xp_y)
+        unique_y_in_classes = xpx.isin(unique_y, classes, xp=xp_y)
 
         if not xp_y.all(unique_y_in_classes):
             raise ValueError(

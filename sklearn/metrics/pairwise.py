@@ -11,7 +11,7 @@ from numbers import Integral, Real
 
 import numpy as np
 from joblib import effective_n_jobs
-from scipy.sparse import csr_matrix, issparse
+from scipy.sparse import csr_array, issparse
 from scipy.spatial import distance
 
 from sklearn import config_context
@@ -40,6 +40,7 @@ from sklearn.utils._param_validation import (
     StrOptions,
     validate_params,
 )
+from sklearn.utils._sparse import _align_api_if_sparse
 from sklearn.utils.extmath import row_norms, safe_sparse_dot
 from sklearn.utils.fixes import parse_version, sp_base_version
 from sklearn.utils.parallel import Parallel, delayed
@@ -548,9 +549,11 @@ def nan_euclidean_distances(
         # This may not be the case due to floating point rounding errors.
         np.fill_diagonal(distances, 0.0)
 
-    present_X = 1 - missing_X
-    present_Y = present_X if Y is X else ~missing_Y
-    present_count = np.dot(present_X, present_Y.T)
+    # Cast the boolean presence masks to float so the matrix product runs
+    # through BLAS instead of the much slower integer matmul.
+    present_X = (~missing_X).astype(distances.dtype)
+    present_Y = present_X if Y is X else (~missing_Y).astype(distances.dtype)
+    present_count = present_X @ present_Y.T
     distances[present_count == 0] = np.nan
     # avoid divide by zero
     np.maximum(1, present_count, out=present_count)
@@ -650,7 +653,8 @@ def _argmin_reduce(dist, start):
     # `start` is specified in the signature but not used. This is because the higher
     # order `pairwise_distances_chunked` function needs reduction functions that are
     # passed as argument to have a two arguments signature.
-    return dist.argmin(axis=1)
+    xp, _ = get_namespace(dist)
+    return xp.argmin(dist, axis=1)
 
 
 _VALID_METRICS = [
@@ -937,6 +941,7 @@ def pairwise_distances_argmin(X, Y, *, axis=1, metric="euclidean", metric_kwargs
     """
     ensure_all_finite = "allow-nan" if metric == "nan_euclidean" else True
     X, Y = check_pairwise_arrays(X, Y, ensure_all_finite=ensure_all_finite)
+    xp, _ = get_namespace(X, Y)
 
     if axis == 0:
         X, Y = Y, X
@@ -944,7 +949,7 @@ def pairwise_distances_argmin(X, Y, *, axis=1, metric="euclidean", metric_kwargs
     if metric_kwargs is None:
         metric_kwargs = {}
 
-    if ArgKmin.is_usable_for(X, Y, metric):
+    if ArgKmin.is_usable_for(X, Y, metric) and _is_numpy_namespace(xp):
         # This is an adaptor for one "sqeuclidean" specification.
         # For this backend, we can directly use "sqeuclidean".
         if metric_kwargs.get("squared", False) and metric == "euclidean":
@@ -972,14 +977,13 @@ def pairwise_distances_argmin(X, Y, *, axis=1, metric="euclidean", metric_kwargs
         # Turn off check for finiteness because this is costly and because arrays
         # have already been validated.
         with config_context(assume_finite=True):
-            indices = np.concatenate(
+            indices = xp.concat(
                 list(
-                    # This returns an np.ndarray generator whose arrays we need
-                    # to flatten into one.
                     pairwise_distances_chunked(
                         X, Y, reduce_func=_argmin_reduce, metric=metric, **metric_kwargs
                     )
-                )
+                ),
+                axis=0,
             )
 
     return indices
@@ -1093,8 +1097,8 @@ def manhattan_distances(X, Y=None):
     n_x, n_y = X.shape[0], Y.shape[0]
 
     if issparse(X) or issparse(Y):
-        X = csr_matrix(X, copy=False)
-        Y = csr_matrix(Y, copy=False)
+        X = csr_array(X, copy=False)
+        Y = csr_array(Y, copy=False)
         X.sum_duplicates()  # this also sorts indices in-place
         Y.sum_duplicates()
         D = np.zeros((n_x, n_y))
@@ -1188,6 +1192,8 @@ def cosine_distances(X, Y=None):
 def paired_euclidean_distances(X, Y):
     """Compute the paired euclidean distances between X and Y.
 
+    Distances are calculated between (X[0], Y[0]), (X[1], Y[1]), ..., etc.
+
     Read more in the :ref:`User Guide <metrics>`.
 
     Parameters
@@ -1201,8 +1207,9 @@ def paired_euclidean_distances(X, Y):
     Returns
     -------
     distances : ndarray of shape (n_samples,)
-        Output array/matrix containing the calculated paired euclidean
-        distances.
+        Returns the euclidean distances between the row vectors of `X`
+        and the row vectors of `Y`, where `distances[i]` is the
+        distance between `X[i]` and `Y[i]`.
 
     Examples
     --------
@@ -1223,8 +1230,7 @@ def paired_euclidean_distances(X, Y):
 def paired_manhattan_distances(X, Y):
     """Compute the paired L1 distances between X and Y.
 
-    Distances are calculated between (X[0], Y[0]), (X[1], Y[1]), ...,
-    (X[n_samples], Y[n_samples]).
+    Distances are calculated between (X[0], Y[0]), (X[1], Y[1]), ..., etc.
 
     Read more in the :ref:`User Guide <metrics>`.
 
@@ -1239,8 +1245,9 @@ def paired_manhattan_distances(X, Y):
     Returns
     -------
     distances : ndarray of shape (n_samples,)
-        L1 paired distances between the row vectors of `X`
-        and the row vectors of `Y`.
+        Returns the manhattan distances between the row vectors of `X`
+        and the row vectors of `Y`, where `distances[i]` is the
+        distance between `X[i]` and `Y[i]`.
 
     Examples
     --------
@@ -1269,6 +1276,8 @@ def paired_cosine_distances(X, Y):
     """
     Compute the paired cosine distances between X and Y.
 
+    Distances are calculated between (X[0], Y[0]), (X[1], Y[1]), ..., etc.
+
     Read more in the :ref:`User Guide <metrics>`.
 
     Parameters
@@ -1282,7 +1291,7 @@ def paired_cosine_distances(X, Y):
     Returns
     -------
     distances : ndarray of shape (n_samples,)
-        Returns the distances between the row vectors of `X`
+        Returns the cosine distances between the row vectors of `X`
         and the row vectors of `Y`, where `distances[i]` is the
         distance between `X[i]` and `Y[i]`.
 
@@ -1325,7 +1334,7 @@ def paired_distances(X, Y, *, metric="euclidean", **kwds):
     """
     Compute the paired distances between X and Y.
 
-    Compute the distances between (X[0], Y[0]), (X[1], Y[1]), etc...
+    Distances are calculated between (X[0], Y[0]), (X[1], Y[1]), ..., etc.
 
     Read more in the :ref:`User Guide <metrics>`.
 
@@ -1354,7 +1363,8 @@ def paired_distances(X, Y, *, metric="euclidean", **kwds):
     -------
     distances : ndarray of shape (n_samples,)
         Returns the distances between the row vectors of `X`
-        and the row vectors of `Y`.
+        and the row vectors of `Y`, where `distances[i]` is the
+        distance between `X[i]` and `Y[i]`.
 
     See Also
     --------
@@ -1747,7 +1757,7 @@ def cosine_similarity(X, Y=None, dense_output=True):
 
     K = safe_sparse_dot(X_normalized, Y_normalized.T, dense_output=dense_output)
 
-    return K
+    return _align_api_if_sparse(K)
 
 
 @validate_params(
@@ -1981,7 +1991,16 @@ def _parallel_pairwise(X, Y, func, n_jobs, **kwds):
     # allocate 2D arrays using the C-contiguity convention by default.
     ret = xp.empty((X.shape[0], Y.shape[0]), device=device, dtype=dtype_float).T
     Parallel(backend="threading", n_jobs=n_jobs)(
-        fd(func, ret, s, X, Y[s, ...], **kwds)
+        fd(
+            func,
+            ret,
+            s,
+            X,
+            Y[s, ...],
+            # Y_norm_squared for euclidean distance is a precomputed per-sample norm
+            # passed through kwds; slice it to match the current Y chunk.
+            **{k: (v[s] if k == "Y_norm_squared" else v) for k, v in kwds.items()},
+        )
         for s in gen_even_slices(_num_samples(Y), effective_n_jobs(n_jobs))
     )
 
@@ -2041,7 +2060,7 @@ def _pairwise_callable(X, Y, metric, ensure_all_finite=True, **kwds):
 
     else:
         # Calculate all cells
-        out = xp.empty((X.shape[0], Y.shape[0]), dtype=dtype_float)
+        out = xp.empty((X.shape[0], Y.shape[0]), dtype=dtype_float, device=device)
         iterator = itertools.product(range(X.shape[0]), range(Y.shape[0]))
         for i, j in iterator:
             x = _get_slice(X, i)

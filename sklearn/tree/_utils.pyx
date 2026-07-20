@@ -7,11 +7,25 @@ from libc.math cimport log as ln
 from libc.math cimport isnan
 from libc.string cimport memset
 
-import numpy as np
 cimport numpy as cnp
 cnp.import_array()
 
+from sklearn.utils._bitset cimport BITSET_INNER_DTYPE_C, in_bitset
 from sklearn.utils._random cimport our_rand_r
+
+cdef inline bint goes_left(
+    float64_t threshold,
+    const BITSET_INNER_DTYPE_C* left_cat_bitset,
+    bint missing_go_to_left,
+    bint is_categorical,
+    float32_t value,
+) noexcept nogil:
+    if isnan(value):
+        return missing_go_to_left
+    elif is_categorical:
+        return in_bitset(left_cat_bitset, <uint8_t> value)
+    else:
+        return value <= threshold
 
 # =============================================================================
 # Helper functions
@@ -65,25 +79,6 @@ cdef inline float64_t rand_uniform(float64_t low, float64_t high,
 
 cdef inline float64_t log(float64_t x) noexcept nogil:
     return ln(x) / ln(2.0)
-
-
-def _any_isnan_axis0(const float32_t[:, :] X):
-    """Same as np.any(np.isnan(X), axis=0)"""
-    cdef:
-        intp_t i, j
-        intp_t n_samples = X.shape[0]
-        intp_t n_features = X.shape[1]
-        uint8_t[::1] isnan_out = np.zeros(X.shape[1], dtype=np.bool_)
-
-    with nogil:
-        for i in range(n_samples):
-            for j in range(n_features):
-                if isnan_out[j]:
-                    continue
-                if isnan(X[i, j]):
-                    isnan_out[j] = True
-                    break
-    return np.asarray(isnan_out)
 
 
 cdef class WeightedFenwickTree:

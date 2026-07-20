@@ -64,9 +64,11 @@ common_dependencies_without_coverage = [
     "scipy",
     "cython",
     "joblib",
+    "narwhals",
     "threadpoolctl",
     "matplotlib",
     "pandas",
+    "rich",
     "pyamg",
     "pytest",
     "pytest-xdist",
@@ -87,6 +89,12 @@ default_package_constraints = {
     # TODO: remove once when we're using the new way to enable coverage in subprocess
     # introduced in 7.0.0, see https://github.com/pytest-dev/pytest-cov?tab=readme-ov-file#upgrading-from-pytest-cov-63
     "pytest-cov": "<=6.3.0",
+    # Cython 3.2.6, 3.2.7 and 3.2.8 break pickling of cyfunctions (e.g.
+    # KDTree.query) across joblib/loky workers on Python 3.14. 3.2.5 works and a fix is
+    # expected in a later release, so only these versions are excluded instead of using
+    # <= 3.2.5 as constraint.
+    # See https://github.com/scikit-learn/scikit-learn/pull/34419
+    "cython": "!=3.2.6,!=3.2.7,!=3.2.8",
 }
 
 
@@ -101,7 +109,7 @@ build_metadata_list = [
         "tag": "cuda",
         "folder": "build_tools/github",
         "platform": "linux-64",
-        "channels": ["conda-forge", "pytorch", "nvidia"],
+        "channels": ["rapidsai", "conda-forge"],
         "conda_dependencies": common_dependencies
         + [
             "ccache",
@@ -109,17 +117,18 @@ build_metadata_list = [
             "polars",
             "pyarrow",
             "cupy",
+            # cuvs is needed for cupyx.scipy.spatial.distance.cdist and friends
+            "cuvs",
             "array-api-strict",
+            "scipy-doctest",
         ],
-        "package_constraints": {
-            "blas": "[build=mkl]",
-        },
+        "virtual_package_spec": True,
     },
     {
         "name": "pylatest_conda_forge_mkl_linux-64",
         "type": "conda",
         "tag": "main-ci",
-        "folder": "build_tools/azure",
+        "folder": "build_tools/github",
         "platform": "linux-64",
         "channels": ["conda-forge"],
         "conda_dependencies": common_dependencies
@@ -141,7 +150,7 @@ build_metadata_list = [
         "name": "pylatest_conda_forge_osx-arm64",
         "type": "conda",
         "tag": "main-ci",
-        "folder": "build_tools/azure",
+        "folder": "build_tools/github",
         "platform": "osx-arm64",
         "channels": ["conda-forge"],
         "conda_dependencies": common_dependencies
@@ -153,12 +162,19 @@ build_metadata_list = [
             "pytorch-cpu",
             "array-api-strict",
         ],
+        # Temporarily pin blas to use OpenBLAS instead of BLIS because the latter has
+        # numerical issues, see https://github.com/scikit-learn/scikit-learn/pull/34162
+        # TODO: remove when BLIS is fixed or not shipped by default (which seems
+        # unexpected) by conda-forge.
+        "package_constraints": {
+            "blas": "[build=openblas]",
+        },
     },
     {
         "name": "pylatest_conda_forge_mkl_no_openmp",
         "type": "conda",
         "tag": "main-ci",
-        "folder": "build_tools/azure",
+        "folder": "build_tools/github",
         "platform": "osx-64",
         "channels": ["conda-forge"],
         "conda_dependencies": common_dependencies + ["ccache"],
@@ -170,7 +186,7 @@ build_metadata_list = [
         "name": "pymin_conda_forge_openblas_min_dependencies",
         "type": "conda",
         "tag": "main-ci",
-        "folder": "build_tools/azure",
+        "folder": "build_tools/github",
         "platform": "linux-64",
         "channels": ["conda-forge"],
         "conda_dependencies": remove_from(common_dependencies, ["pandas"])
@@ -186,19 +202,21 @@ build_metadata_list = [
             "matplotlib": "min",
             "cython": "min",
             "joblib": "min",
+            "narwhals": "min",
             "threadpoolctl": "min",
             "meson-python": "min",
             "pandas": "min",
             "polars": "min",
             "pyamg": "min",
             "pyarrow": "min",
+            "rich": "min",
         },
     },
     {
         "name": "pymin_conda_forge_openblas_ubuntu_2204",
         "type": "conda",
         "tag": "main-ci",
-        "folder": "build_tools/azure",
+        "folder": "build_tools/github",
         "platform": "linux-64",
         "channels": ["conda-forge"],
         "conda_dependencies": (
@@ -215,7 +233,7 @@ build_metadata_list = [
         "name": "pylatest_pip_openblas_pandas",
         "type": "conda",
         "tag": "main-ci",
-        "folder": "build_tools/azure",
+        "folder": "build_tools/github",
         "platform": "linux-64",
         "channels": ["conda-forge"],
         "conda_dependencies": ["python", "ccache"],
@@ -239,7 +257,7 @@ build_metadata_list = [
         "name": "pylatest_pip_scipy_dev",
         "type": "conda",
         "tag": "scipy-dev",
-        "folder": "build_tools/azure",
+        "folder": "build_tools/github",
         "platform": "linux-64",
         "channels": ["conda-forge"],
         "conda_dependencies": ["python", "ccache"],
@@ -257,8 +275,10 @@ build_metadata_list = [
                     "numpy",
                     "scipy",
                     "pandas",
+                    "rich",
                     "cython",
                     "joblib",
+                    "narwhals",
                     "pillow",
                 ],
             )
@@ -273,7 +293,7 @@ build_metadata_list = [
         "name": "pylatest_free_threaded",
         "type": "conda",
         "tag": "free-threaded",
-        "folder": "build_tools/azure",
+        "folder": "build_tools/github",
         "platform": "linux-64",
         "channels": ["conda-forge"],
         "conda_dependencies": [
@@ -283,6 +303,7 @@ build_metadata_list = [
             "numpy",
             "scipy",
             "joblib",
+            "narwhals",
             "threadpoolctl",
             "pytest",
             "pytest-run-parallel",
@@ -294,10 +315,12 @@ build_metadata_list = [
         "name": "pymin_conda_forge_openblas",
         "type": "conda",
         "tag": "main-ci",
-        "folder": "build_tools/azure",
+        "folder": "build_tools/github",
         "platform": "win-64",
         "channels": ["conda-forge"],
-        "conda_dependencies": remove_from(common_dependencies, ["pandas", "pyamg"])
+        "conda_dependencies": remove_from(
+            common_dependencies, ["pandas", "rich", "pyamg"]
+        )
         + [
             "wheel",
             "pip",
@@ -337,7 +360,6 @@ build_metadata_list = [
             "towncrier",
         ],
         "pip_dependencies": [
-            "sphinxcontrib-sass",
             # TODO: move pandas to conda_dependencies when pandas 1.5.1 is the minimum
             # supported version
             "pandas",
@@ -361,10 +383,10 @@ build_metadata_list = [
             "pooch": "min",
             "pyamg": "min",
             "sphinx-design": "min",
-            "sphinxcontrib-sass": "min",
             "sphinx-remove-toctrees": "min",
             "pydata-sphinx-theme": "min",
             "towncrier": "min",
+            "rich": "min",
         },
     },
     {
@@ -396,14 +418,8 @@ build_metadata_list = [
             "jupyterlite-sphinx",
             "jupyterlite-pyodide-kernel",
         ],
-        "pip_dependencies": [
-            "sphinxcontrib-sass",
-        ],
         "package_constraints": {
-            "python": "3.11",
-            # Pinned while https://github.com/pola-rs/polars/issues/25039 is
-            # not fixed.
-            "polars": "1.34.0",
+            "python": "3.14",
         },
     },
     {
@@ -413,7 +429,9 @@ build_metadata_list = [
         "folder": "build_tools/github",
         "platform": "linux-aarch64",
         "channels": ["conda-forge"],
-        "conda_dependencies": remove_from(common_dependencies, ["pandas", "pyamg"])
+        "conda_dependencies": remove_from(
+            common_dependencies, ["pandas", "rich", "pyamg"]
+        )
         + ["pip", "ccache"],
         "package_constraints": {
             "python": "3.11",
@@ -426,10 +444,11 @@ build_metadata_list = [
         "name": "debian_32bit",
         "type": "pip",
         "tag": "main-ci",
-        "folder": "build_tools/azure",
+        "folder": "build_tools/github",
         "pip_dependencies": [
             "cython",
             "joblib",
+            "narwhals",
             "threadpoolctl",
             "pytest",
             "pytest-xdist",
@@ -445,10 +464,11 @@ build_metadata_list = [
         "name": "ubuntu_atlas",
         "type": "pip",
         "tag": "main-ci",
-        "folder": "build_tools/azure",
+        "folder": "build_tools/github",
         "pip_dependencies": [
             "cython",
             "joblib",
+            "narwhals",
             "threadpoolctl",
             "pytest",
             "pytest-xdist",
@@ -457,10 +477,33 @@ build_metadata_list = [
         ],
         "package_constraints": {
             "joblib": "min",
+            "narwhals": "min",
             "threadpoolctl": "min",
             "cython": "min",
         },
         "python_version": "3.12.3",
+    },
+    {
+        "name": "lint",
+        "type": "pip",
+        "tag": "lint",
+        "folder": "build_tools/github",
+        "pip_dependencies": ["pytest", "ruff", "mypy", "cython-lint"],
+        "package_constraints": {
+            # We set `pytest` to an arbitrary recent version to keep it consistent with
+            # the settings in `.pre-commit-config.yml`. They should be updated from
+            # time to time in both places.
+            "pytest": "9.1.0",
+            # We fix the version of the linters to some arbitrary version to
+            # avoid changing linting conventions too often.
+            # The meaning of the "min" values is set in `_min_dependencies.py`
+            # and should be updated from time to time when we feel the need
+            # for it.
+            "ruff": "min",
+            "mypy": "min",
+            "cython-lint": "min",
+        },
+        "python_version": "3.11",
     },
 ]
 
@@ -556,22 +599,26 @@ def write_all_conda_environments(build_metadata_list):
         write_conda_environment(build_metadata)
 
 
-def conda_lock(environment_path, lock_file_path, platform):
-    execute_command(
-        [
-            "conda-lock",
-            "lock",
-            "--mamba",
-            "--kind",
-            "explicit",
-            "--platform",
-            platform,
-            "--file",
-            str(environment_path),
-            "--filename-template",
-            str(lock_file_path),
-        ]
-    )
+def conda_lock(
+    environment_path, lock_file_path, platform, virtual_package_spec_path=None
+):
+    cmd = [
+        "conda-lock",
+        "lock",
+        "--mamba",
+        "--kind",
+        "explicit",
+        "--platform",
+        platform,
+        "--file",
+        str(environment_path),
+        "--filename-template",
+        str(lock_file_path),
+    ]
+    if virtual_package_spec_path is not None:
+        cmd.extend(["--virtual-package-spec", str(virtual_package_spec_path)])
+
+    execute_command(cmd)
 
 
 def create_conda_lock_file(build_metadata):
@@ -584,7 +631,14 @@ def create_conda_lock_file(build_metadata):
         lock_file_basename = f"{lock_file_basename}_{platform}"
 
     lock_file_path = folder_path / f"{lock_file_basename}_conda.lock"
-    conda_lock(environment_path, lock_file_path, platform)
+
+    virtual_package_spec_path = None
+    if build_metadata.get("virtual_package_spec"):
+        virtual_package_spec_path = (
+            folder_path / f"{lock_file_basename}_virtual_package_spec.yml"
+        )
+
+    conda_lock(environment_path, lock_file_path, platform, virtual_package_spec_path)
 
 
 def write_all_conda_lock_files(build_metadata_list):
@@ -650,6 +704,9 @@ def write_pip_lock_file(build_metadata):
             "-n",
             f"pip-tools-python{python_version}",
             f"python={python_version}",
+            # TODO remove the following line once pip-tools is compatible with pip 26.0,
+            # see https://github.com/jazzband/pip-tools/issues/2319
+            "pip=25.3",
             "pip-tools",
             "-y",
         ]
