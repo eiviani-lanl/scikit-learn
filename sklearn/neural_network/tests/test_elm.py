@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
+from sklearn import config_context
 from sklearn.base import clone
 from sklearn.datasets import (
     fetch_openml,
@@ -15,7 +16,18 @@ from sklearn.model_selection import train_test_split
 from sklearn.neural_network import ExtremeLearningClassifier, ExtremeLearningRegressor
 from sklearn.neural_network._base import ACTIVATIONS, WEIGHTS
 from sklearn.preprocessing import MinMaxScaler, OneHotEncoder, StandardScaler
-from sklearn.utils.estimator_checks import parametrize_with_checks
+from sklearn.utils._array_api import (
+    _atol_for_type,
+    get_namespace,
+    move_to,
+    yield_namespace_device_dtype_combinations,
+)
+from sklearn.utils._array_api import device as array_device
+from sklearn.utils.estimator_checks import (
+    _array_api_for_tests,
+    check_array_api_input_and_values,
+    parametrize_with_checks,
+)
 
 ACTIVATION_NAMES = [name for name in ACTIVATIONS.keys() if name != "exp"]
 WEIGHT_NAMES = list(WEIGHTS.keys())
@@ -554,6 +566,303 @@ def test_multilayer_progression(weight_init, hidden_layer_sizes, activation, exp
     assert_allclose(actual_auc, exp_auc, rtol=1e-2, atol=5e-3)
 
 
+@pytest.mark.parametrize("ridge_alpha", [None, 2])
+@pytest.mark.parametrize("hidden_layer_sizes", [(10,), (10, 10)])
+# were all of the previous configurations necessary?
+# One of these fails due to float32 Ridge solve, we could decide to cast the design
+# matrix to float64, but I don't think it's necessary
+@pytest.mark.parametrize(
+    "estimator, generator",
+    [
+        (ExtremeLearningClassifier, make_classification),
+        (ExtremeLearningRegressor, make_regression),
+    ],
+)
+@pytest.mark.parametrize(
+    "array_namespace, device_name, dtype_name",
+    yield_namespace_device_dtype_combinations(),
+)
+def test_array_api(
+    ridge_alpha,
+    hidden_layer_sizes,
+    estimator,
+    generator,
+    array_namespace,
+    device_name,
+    dtype_name,
+):
+    # all pass when the solver='svd' param is set in Ridge
+    # many fail otherwise
+    xp, device = _array_api_for_tests(array_namespace, device_name, dtype_name)
+    X_np, y_np = generator(
+        n_samples=10000,
+        n_features=40,
+        n_informative=4,
+        random_state=0,
+    )
+
+    X_np = X_np.astype(dtype_name, copy=False)
+    y_np = y_np.astype(dtype_name, copy=False)
+
+    X_xp = xp.asarray(X_np, device=device)
+    y_xp_or_np = np.asarray(y_np, copy=True)
+
+    params = dict(
+        ridge_alpha=ridge_alpha, hidden_layer_sizes=hidden_layer_sizes, random_state=0
+    )
+
+    with config_context(array_api_dispatch=False):
+        elm_np = estimator(**params).fit(X_np, y_np)
+        pred_np = elm_np.predict(X_np)
+
+    atol = _atol_for_type(dtype_name) * 4
+    rtol = 1e-4 if dtype_name == "float32" else 1e-8
+
+    with config_context(array_api_dispatch=True):
+        elm_xp = estimator(**params).fit(X_xp, y_xp_or_np)
+        pred_xp = elm_xp.predict(X_xp)
+
+        assert get_namespace(pred_xp)[0] == get_namespace(X_xp)[0]
+        assert array_device(pred_xp) == array_device(X_xp)
+        assert pred_xp.dtype == X_xp.dtype
+
+        assert_allclose(
+            move_to(pred_xp, xp=np, device="cpu"),
+            pred_np,
+            rtol=rtol,
+            atol=atol,
+        )
+
+        attr_xp = getattr(elm_xp, "coef_")
+        attr_np = getattr(elm_np, "coef_")
+
+        assert_allclose(
+            move_to(attr_xp, xp=np, device="cpu"), attr_np, rtol=rtol, atol=atol
+        )
+        assert attr_xp.dtype == X_xp.dtype
+        assert array_device(attr_xp) == array_device(X_xp)
+
+
+@pytest.mark.parametrize("activation", ACTIVATION_NAMES)
+@pytest.mark.parametrize("weight_init", WEIGHT_NAMES[1:])
+@pytest.mark.parametrize(
+    "estimator, generator",
+    [
+        (ExtremeLearningClassifier, make_classification),
+        (ExtremeLearningRegressor, make_regression),
+    ],
+)
+@pytest.mark.parametrize(
+    "array_namespace, device_name, dtype_name",
+    yield_namespace_device_dtype_combinations(),
+)
+def test_array_api_activations(
+    activation,
+    weight_init,
+    estimator,
+    generator,
+    array_namespace,
+    device_name,
+    dtype_name,
+):
+    # all pass when the solver='svd' param is set in Ridge
+    # many fail otherwise
+    xp, device = _array_api_for_tests(array_namespace, device_name, dtype_name)
+    X_np, y_np = generator(
+        n_samples=1000,
+        n_features=40,
+        n_informative=4,
+        random_state=0,
+    )
+
+    X_np = X_np.astype(dtype_name, copy=False)
+    y_np = y_np.astype(dtype_name, copy=False)
+
+    X_xp = xp.asarray(X_np, device=device)
+    y_xp_or_np = np.asarray(y_np, copy=True)
+
+    with config_context(array_api_dispatch=False):
+        elm_np = estimator(
+            hidden_layer_sizes=(10,),
+            activation=activation,
+            weight_init=weight_init,
+            random_state=0,
+        ).fit(X_np, y_np)
+        pred_np = elm_np.predict(X_np)
+
+    atol = _atol_for_type(dtype_name) * 4
+    rtol = 1e-4 if dtype_name == "float32" else 1e-8
+
+    with config_context(array_api_dispatch=True):
+        elm_xp = estimator(
+            hidden_layer_sizes=(10,),
+            activation=activation,
+            weight_init=weight_init,
+            random_state=0,
+        ).fit(X_xp, y_xp_or_np)
+        pred_xp = elm_xp.predict(X_xp)
+
+        assert get_namespace(pred_xp)[0] == get_namespace(X_xp)[0]
+        assert array_device(pred_xp) == array_device(X_xp)
+        assert pred_xp.dtype == X_xp.dtype
+
+        assert_allclose(
+            move_to(pred_xp, xp=np, device="cpu"),
+            pred_np,
+            rtol=rtol,
+            atol=atol,
+        )
+
+        attr_xp = getattr(elm_xp, "coef_")
+        attr_np = getattr(elm_np, "coef_")
+
+        assert_allclose(
+            move_to(attr_xp, xp=np, device="cpu"), attr_np, rtol=rtol, atol=atol
+        )
+        assert attr_xp.dtype == X_xp.dtype
+        assert array_device(attr_xp) == array_device(X_xp)
+
+
+@pytest.mark.parametrize("ridge_alpha", [None, 2])
+@pytest.mark.parametrize("hidden_layer_sizes", [(10,), (10, 10)])
+@pytest.mark.parametrize("batch", [100, 1000])
+@pytest.mark.parametrize(
+    "estimator, generator",
+    [
+        (ExtremeLearningClassifier, make_classification),
+        (ExtremeLearningRegressor, make_regression),
+    ],
+)
+@pytest.mark.parametrize(
+    "array_namespace, device_name, dtype_name",
+    yield_namespace_device_dtype_combinations(),
+)
+def test_array_api_partial_fit(
+    ridge_alpha,
+    hidden_layer_sizes,
+    batch,
+    estimator,
+    generator,
+    array_namespace,
+    device_name,
+    dtype_name,
+):
+    xp, device = _array_api_for_tests(array_namespace, device_name, dtype_name)
+    X_np, y_np = generator(
+        n_samples=10000,
+        n_features=40,
+        n_informative=4,
+        random_state=0,
+    )
+
+    X_np = X_np.astype(dtype_name, copy=False)
+    y_np = y_np.astype(dtype_name, copy=False)
+
+    X_xp = xp.asarray(X_np, device=device)
+    y_xp_or_np = np.asarray(y_np, copy=True)
+
+    params = dict(
+        ridge_alpha=ridge_alpha, hidden_layer_sizes=hidden_layer_sizes, random_state=0
+    )
+
+    with config_context(array_api_dispatch=False):
+        np_classes = np.unique(y_xp_or_np)
+        elm_np = estimator(**params)
+
+        for start in range(0, X_np.shape[0], batch):
+            end = min(start + batch, X_np.shape[0])
+            Xb_np = X_np[start:end]
+            yb = y_xp_or_np[start:end]
+            if estimator == ExtremeLearningClassifier:
+                elm_np.partial_fit(Xb_np, yb, classes=np_classes)
+            else:
+                elm_np.partial_fit(Xb_np, yb)
+
+        pred_np = elm_np.predict(X_np)
+
+    atol = _atol_for_type(dtype_name) * 4
+    rtol = 1e-4 if dtype_name == "float32" else 1e-6
+
+    with config_context(array_api_dispatch=True):
+        xp_classes = np.unique(y_xp_or_np)
+        elm_xp = estimator(**params)
+
+        for start in range(0, X_xp.shape[0], batch):
+            end = min(start + batch, X_xp.shape[0])
+            Xb_xp = X_xp[start:end, ...]
+            yb = y_xp_or_np[start:end]
+            if estimator == ExtremeLearningClassifier:
+                elm_xp.partial_fit(Xb_xp, yb, classes=xp_classes)
+            else:
+                elm_xp.partial_fit(Xb_xp, yb)
+
+        pred_xp = elm_xp.predict(X_xp)
+
+        assert get_namespace(pred_xp)[0] == get_namespace(X_xp)[0]
+        assert array_device(pred_xp) == array_device(X_xp)
+        assert pred_xp.dtype == X_xp.dtype
+
+        assert_allclose(
+            move_to(pred_xp, xp=np, device="cpu"),
+            pred_np,
+            rtol=rtol,
+            atol=atol,
+        )
+
+        attr_xp = getattr(elm_xp, "coef_")
+        attr_np = getattr(elm_np, "coef_")
+
+        assert_allclose(
+            move_to(attr_xp, xp=np, device="cpu"), attr_np, rtol=rtol, atol=atol
+        )
+        assert attr_xp.dtype == X_xp.dtype
+        assert array_device(attr_xp) == array_device(X_xp)
+
+
+@pytest.mark.parametrize(
+    "array_namespace, device_name, dtype_name",
+    yield_namespace_device_dtype_combinations(),
+)
+@pytest.mark.parametrize(
+    "estimator",
+    [
+        ExtremeLearningClassifier(),
+        ExtremeLearningRegressor(),
+        ExtremeLearningClassifier(ridge_alpha=0.1),
+        ExtremeLearningRegressor(ridge_alpha=0.1),
+    ],
+)
+def test_array_api_compliance(array_namespace, device_name, dtype_name, estimator):
+    with config_context(array_api_dispatch=True):
+        name = estimator.__class__.__name__
+        check_array_api_input_and_values(
+            name,
+            estimator,
+            array_namespace,
+            device_name=device_name,
+            dtype_name=dtype_name,
+        )
+
+
 @parametrize_with_checks([ExtremeLearningClassifier(), ExtremeLearningRegressor()])
 def test_sklearn_api_conformance(estimator, check):
     check(estimator)
+
+
+def get_expected_failed_checks(estimator):
+    return {
+        "check_classifier_data_not_an_array": "sklearn's namespace detection rejects"
+        " the check's _NotAnArray wrapper before input validation",
+        "check_regressor_data_not_an_array": "sklearn's namespace detection rejects"
+        " the check's _NotAnArray wrapper before input validation",
+    }
+
+
+@parametrize_with_checks(
+    estimators=[ExtremeLearningClassifier(), ExtremeLearningRegressor()],
+    expected_failed_checks=get_expected_failed_checks,
+)
+def test_sklearn_array_api_conformance(estimator, check):
+    # None of the sklearn models require this test, maybe we can pull it out?
+    with config_context(array_api_dispatch=True):
+        check(estimator)
