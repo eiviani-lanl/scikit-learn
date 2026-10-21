@@ -96,9 +96,10 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         self.ridge_alpha = ridge_alpha
         self.rtol = rtol
 
-    def _initialize(self, X, xp, device_):
+    def _initialize(self, X):
         # set all attributes, initialize weights etc. for first call
         # Initialize parameters
+        xp, _, device_ = get_namespace_and_device(X)
         fn = ACTIVATIONS[self.activation]
         self._activation_fn = fn
         hidden_layer_sizes = np.asarray(self.hidden_layer_sizes)
@@ -117,6 +118,15 @@ class ExtremeLearningBase(BaseEstimator, ABC):
                 dtype=X.dtype,
                 device=device_,
             )
+            # xp.astype(
+            #     move_to(
+            #     self._weight_mode(self.n_features_in_, hidden_layer_sizes[0], rng=rng),
+            #     xp=xp,
+            #     device=device_
+            #     ),
+            #     X.dtype,
+            #     copy=False,
+            # )
         )
         self.b_.append(
             xp.asarray(
@@ -124,6 +134,15 @@ class ExtremeLearningBase(BaseEstimator, ABC):
                 dtype=X.dtype,
                 device=device_,
             )
+            # xp.astype(
+            #     move_to(
+            #     self._weight_mode(1, hidden_layer_sizes[0], rng=rng).reshape(-1),
+            #     xp=xp,
+            #     device=device_
+            #     ),
+            #     X.dtype,
+            #     copy=False,
+            # )
         )
         for i, layer in enumerate(hidden_layer_sizes[1:]):
             # (n_hidden, n_features)
@@ -137,6 +156,19 @@ class ExtremeLearningBase(BaseEstimator, ABC):
                     dtype=X.dtype,
                     device=device_,
                 )
+                # xp.astype(
+                #     move_to(
+                #     self._weight_mode(
+                #                     hidden_layer_sizes[i],
+                #                     layer,
+                #                     rng=rng,
+                #                     ),
+                #     xp=xp,
+                #     device=device_
+                #     ),
+                #     X.dtype,
+                #     copy=False,
+                # )
             )
             # (n_hidden,)
             self.b_.append(
@@ -149,6 +181,19 @@ class ExtremeLearningBase(BaseEstimator, ABC):
                     dtype=X.dtype,
                     device=device_,
                 )
+                # xp.astype(
+                #     move_to(
+                #     self._weight_mode(
+                #         1,
+                #         layer,
+                #         rng=rng,
+                #     ).reshape(-1),
+                #     xp=xp,
+                #     device=device_
+                #     ),
+                #     X.dtype,
+                #     copy=False,
+                # )
             )
 
     @_fit_context(prefer_skip_nested_validation=True)
@@ -156,7 +201,6 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         self._validate_params()
         xp, _, device_ = get_namespace_and_device(
             X,
-            y,
         )
 
         y = move_to(y, xp=xp, device=device_)
@@ -164,10 +208,10 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         # Assumption : X, Y have been pre-processed.
         # X shape: (n_samples, n_features)
         # Y shape: (n_samples, n_classes)
-        self._initialize(X, xp, device_)
+        self._initialize(X)
         # design matrix shape: (n_samples, sum_hidden+n_features)
         # or (n_samples, sum_hidden)
-        D = self._design_matrix(X, xp)
+        D = self._design_matrix(X)
 
         # beta shape: (sum_hidden+n_features, n_classes)
         # or (sum_hidden, n_classes)
@@ -217,7 +261,6 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         self._validate_params()
         xp, _, device_ = get_namespace_and_device(
             X,
-            y,
         )
 
         y = move_to(y, xp=xp, device=device_)
@@ -228,11 +271,11 @@ class ExtremeLearningBase(BaseEstimator, ABC):
 
         if not hasattr(self, "W_"):
             # initialize params only on first call
-            self._initialize(X, xp, device_)
+            self._initialize(X)
 
         # design matrix shape: (n_samples, sum_hidden+n_features)
         # or (n_samples, sum_hidden)
-        D = self._design_matrix(X, xp)
+        D = self._design_matrix(X)
         # Store accumulated Gram and moment matrices in float64 to reduce
         # rounding error across batch updates
         # This limits the devices we support, so we'll need to decide if
@@ -290,7 +333,8 @@ class ExtremeLearningBase(BaseEstimator, ABC):
             self.coef_ = _ravel(self.coef_)
         return self
 
-    def _design_matrix(self, X, xp):
+    def _design_matrix(self, X):
+        xp, _ = get_namespace(X)
         Hs = []
         H_prev = X
         for W, b in zip(self.W_, self.b_, strict=False):
@@ -303,8 +347,7 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         return xp.concat(Hs, axis=1)
 
     def _predict(self, X):
-        xp, _ = get_namespace(X)
-        D = self._design_matrix(X, xp)
+        D = self._design_matrix(X)
         return D @ self.coef_
 
     def _get_generator(self, random_state):
@@ -718,7 +761,7 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
             label = move_to(self.classes_[:1], xp=xp, device=device_)
             return xp.broadcast_to(label, (X.shape[0],))
 
-        out = self._predict_proba(X, xp)
+        out = self._predict_proba(X)
         indices = xp.argmax(out, axis=1)
 
         classes_xp, _, classes_device = get_namespace_and_device(self.classes_)
@@ -767,9 +810,10 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
             reset=False,
             dtype=[xp.float64, xp.float32],
         )
-        return self._predict_proba(X, xp)
+        return self._predict_proba(X)
 
-    def _predict_proba(self, X, xp):
+    def _predict_proba(self, X):
+        xp, _ = get_namespace(X)
         out = super()._predict(X)
         shifted = out - xp.max(out, axis=1, keepdims=True)
         exp_out = xp.exp(shifted)
