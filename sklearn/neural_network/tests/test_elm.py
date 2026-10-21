@@ -28,6 +28,9 @@ from sklearn.utils.estimator_checks import (
     check_array_api_input_and_values,
     parametrize_with_checks,
 )
+from sklearn.utils._testing import (
+    skip_if_array_api_compat_not_configured,
+)
 
 ACTIVATION_NAMES = [name for name in ACTIVATIONS.keys() if name != "exp"]
 WEIGHT_NAMES = list(WEIGHTS.keys())
@@ -819,50 +822,12 @@ def test_array_api_partial_fit(
         assert array_device(attr_xp) == array_device(X_xp)
 
 
-@pytest.mark.parametrize(
-    "array_namespace, device_name, dtype_name",
-    yield_namespace_device_dtype_combinations(),
-)
-@pytest.mark.parametrize(
-    "estimator",
-    [
-        ExtremeLearningClassifier(),
-        ExtremeLearningRegressor(),
-        ExtremeLearningClassifier(ridge_alpha=0.1),
-        ExtremeLearningRegressor(ridge_alpha=0.1),
-    ],
-)
-def test_array_api_compliance(array_namespace, device_name, dtype_name, estimator):
-    with config_context(array_api_dispatch=True):
-        name = estimator.__class__.__name__
-        check_array_api_input_and_values(
-            name,
-            estimator,
-            array_namespace,
-            device_name=device_name,
-            dtype_name=dtype_name,
-        )
-
-
-@parametrize_with_checks([ExtremeLearningClassifier(), ExtremeLearningRegressor()])
+@skip_if_array_api_compat_not_configured
+@parametrize_with_checks([
+    ExtremeLearningClassifier(),
+    ExtremeLearningRegressor(),
+    ExtremeLearningClassifier(ridge_alpha=0.1), 
+    ExtremeLearningRegressor(ridge_alpha=0.1),
+    ])
 def test_sklearn_api_conformance(estimator, check):
     check(estimator)
-
-
-def get_expected_failed_checks(estimator):
-    return {
-        "check_classifier_data_not_an_array": "sklearn's namespace detection rejects"
-        " the check's _NotAnArray wrapper before input validation",
-        "check_regressor_data_not_an_array": "sklearn's namespace detection rejects"
-        " the check's _NotAnArray wrapper before input validation",
-    }
-
-
-@parametrize_with_checks(
-    estimators=[ExtremeLearningClassifier(), ExtremeLearningRegressor()],
-    expected_failed_checks=get_expected_failed_checks,
-)
-def test_sklearn_array_api_conformance(estimator, check):
-    # None of the sklearn models require this test, maybe we can pull it out?
-    with config_context(array_api_dispatch=True):
-        check(estimator)
