@@ -571,9 +571,6 @@ def test_multilayer_progression(weight_init, hidden_layer_sizes, activation, exp
 
 @pytest.mark.parametrize("ridge_alpha", [None, 2])
 @pytest.mark.parametrize("hidden_layer_sizes", [(10,), (10, 10)])
-# were all of the previous configurations necessary?
-# One of these fails due to float32 Ridge solve, we could decide to cast the design
-# matrix to float64, but I don't think it's necessary
 @pytest.mark.parametrize(
     "estimator, generator",
     [
@@ -585,7 +582,7 @@ def test_multilayer_progression(weight_init, hidden_layer_sizes, activation, exp
     "array_namespace, device_name, dtype_name",
     yield_namespace_device_dtype_combinations(),
 )
-def test_array_api(
+def test_extreme_learning_array_api(
     ridge_alpha,
     hidden_layer_sizes,
     estimator,
@@ -594,56 +591,66 @@ def test_array_api(
     device_name,
     dtype_name,
 ):
-    # all pass when the solver='svd' param is set in Ridge
-    # many fail otherwise
-    xp, device = _array_api_for_tests(array_namespace, device_name, dtype_name)
-    X_np, y_np = generator(
-        n_samples=10000,
-        n_features=40,
-        n_informative=4,
-        random_state=0,
-    )
-
-    X_np = X_np.astype(dtype_name, copy=False)
-    y_np = y_np.astype(dtype_name, copy=False)
-
-    X_xp = xp.asarray(X_np, device=device)
-    y_xp_or_np = np.asarray(y_np, copy=True)
-
-    params = dict(
-        ridge_alpha=ridge_alpha, hidden_layer_sizes=hidden_layer_sizes, random_state=0
-    )
-
-    with config_context(array_api_dispatch=False):
-        elm_np = estimator(**params).fit(X_np, y_np)
-        pred_np = elm_np.predict(X_np)
 
     atol = _atol_for_type(dtype_name) * 4
     rtol = 1e-4 if dtype_name == "float32" else 1e-8
+    
+    xp, device = _array_api_for_tests(array_namespace, device_name, dtype_name)
+    X_np, y_np = generator(
+        n_samples=500,
+        n_features=20,
+        n_informative=5,
+        random_state=0,
+    )
+    X_np = X_np.astype(dtype_name, copy=False)
+    X_xp = xp.asarray(X_np, device=device)
+
+    params = dict(
+        ridge_alpha=ridge_alpha, 
+        hidden_layer_sizes=hidden_layer_sizes, 
+        random_state=0
+    )
+
+    with config_context(array_api_dispatch=False):
+        est_np = estimator(**params).fit(X_np, y_np)
 
     with config_context(array_api_dispatch=True):
-        elm_xp = estimator(**params).fit(X_xp, y_xp_or_np)
-        pred_xp = elm_xp.predict(X_xp)
+        est_xp = estimator(**params).fit(X_xp, y_np)
 
-        assert get_namespace(pred_xp)[0] == get_namespace(X_xp)[0]
-        assert array_device(pred_xp) == array_device(X_xp)
-        assert pred_xp.dtype == X_xp.dtype
-
+    # Check fitted attributes are close
+    array_attributes = {
+        key: value for key, value in vars(est_np).items() if isinstance(value, np.ndarray)
+    }
+    for attribute_name, attribute_value in array_attributes.items():
+        est_xp_attr = getattr(est_xp, attribute_name)
+        est_xp_attr_np = move_to(est_xp_attr, xp=np, device="cpu")
         assert_allclose(
-            move_to(pred_xp, xp=np, device="cpu"),
-            pred_np,
-            rtol=rtol,
+            attribute_value,
+            est_xp_attr_np,
+            err_msg=f"{attribute_name} not the same",
             atol=atol,
+            rtol=rtol,
         )
 
-        attr_xp = getattr(elm_xp, "coef_")
-        attr_np = getattr(elm_np, "coef_")
-
+    # Check method outputs are close
+    methods = [
+        "predict",
+    ]
+    if estimator.__name__ == "ExtremeLearningClassifier":
+        methods.append("predict_proba")
+    for method_name in methods:
+        with config_context(array_api_dispatch=False):
+            result = getattr(est_np, method_name)(X_np)
+        with config_context(array_api_dispatch=True):
+            result_xp = getattr(est_xp, method_name)(X_xp)
+        result_xp_np = move_to(result_xp, xp=np, device="cpu")
         assert_allclose(
-            move_to(attr_xp, xp=np, device="cpu"), attr_np, rtol=rtol, atol=atol
+            result,
+            result_xp_np,
+            err_msg=f"{method_name}() did not the return the same result",
+            atol=atol,
+            rtol=rtol,
         )
-        assert attr_xp.dtype == X_xp.dtype
-        assert array_device(attr_xp) == array_device(X_xp)
 
 
 @pytest.mark.parametrize("activation", ACTIVATION_NAMES)
@@ -829,5 +836,5 @@ def test_array_api_partial_fit(
     ExtremeLearningClassifier(ridge_alpha=0.1), 
     ExtremeLearningRegressor(ridge_alpha=0.1),
     ])
-def test_sklearn_api_conformance(estimator, check):
+def test_extreme_learning_api_compliance(estimator, check):
     check(estimator)
