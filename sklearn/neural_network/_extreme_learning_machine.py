@@ -282,10 +282,10 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         # accuracy is worth it
         if not hasattr(self, "A"):
             self.A = xp.zeros(
-                (D.shape[1], D.shape[1]), dtype=xp.float64, device=device_
+                (D.shape[1], D.shape[1]), dtype=X.dtype, device=device_
             )
             self.B = xp.zeros(
-                (D.shape[1], y.shape[1]), dtype=xp.float64, device=device_
+                (D.shape[1], y.shape[1]), dtype=X.dtype, device=device_
             )
 
         self.A += D.T @ D
