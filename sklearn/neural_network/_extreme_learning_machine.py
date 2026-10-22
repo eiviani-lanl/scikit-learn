@@ -21,7 +21,6 @@ from sklearn.preprocessing import LabelBinarizer
 from sklearn.utils import column_or_1d
 from sklearn.utils._array_api import (
     _is_numpy_namespace,
-    _ravel,
     check_same_namespace,
     get_namespace,
     get_namespace_and_device,
@@ -231,10 +230,7 @@ class ExtremeLearningBase(BaseEstimator, ABC):
             else:
                 self.coef_ = ridge.coef_.mT
         if self.coef_.ndim == 2 and self.coef_.shape[1] == 1:
-            if _is_numpy_namespace(xp):
-                self.coef_ = self.coef_.ravel()
-            else:
-                self.coef_ = _ravel(self.coef_)
+            self.coef_ = xp.squeeze(self.coef_, axis=1)
         return self
 
     def partial_fit(self, X, y):
@@ -330,7 +326,7 @@ class ExtremeLearningBase(BaseEstimator, ABC):
 
         self.coef_ = xp.astype(self.coef_, X.dtype)
         if self.coef_.ndim == 2 and self.coef_.shape[1] == 1:
-            self.coef_ = _ravel(self.coef_)
+            self.coef_ = xp.squeeze(self.coef_, axis=1)
         return self
 
     def _design_matrix(self, X):
