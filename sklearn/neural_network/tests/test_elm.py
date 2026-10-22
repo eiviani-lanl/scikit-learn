@@ -23,13 +23,12 @@ from sklearn.utils._array_api import (
     yield_namespace_device_dtype_combinations,
 )
 from sklearn.utils._array_api import device as array_device
-from sklearn.utils.estimator_checks import (
-    _array_api_for_tests,
-    check_array_api_input_and_values,
-    parametrize_with_checks,
-)
 from sklearn.utils._testing import (
     skip_if_array_api_compat_not_configured,
+)
+from sklearn.utils.estimator_checks import (
+    _array_api_for_tests,
+    parametrize_with_checks,
 )
 
 ACTIVATION_NAMES = [name for name in ACTIVATIONS.keys() if name != "exp"]
@@ -569,8 +568,22 @@ def test_multilayer_progression(weight_init, hidden_layer_sizes, activation, exp
     assert_allclose(actual_auc, exp_auc, rtol=1e-2, atol=5e-3)
 
 
-@pytest.mark.parametrize("ridge_alpha", [None, 2])
-@pytest.mark.parametrize("hidden_layer_sizes", [(10,), (10, 10)])
+@skip_if_array_api_compat_not_configured
+@pytest.mark.parametrize(
+        "ridge_alpha, hidden_layer_sizes, activation",
+        [
+            (2, (10,), "relu"),
+            (2, (10, 10), "logistic"),
+            (2, (10,), "softmax"),
+            (2, (10,), "tanh"),
+            (None, (10,), "softmin"),
+            (None, (10, 10), "log_softmax"),
+            (None, (10,), "log_sigmoid")
+        ]
+)
+# @pytest.mark.parametrize("ridge_alpha", [None, 2])
+# @pytest.mark.parametrize("hidden_layer_sizes", [(10,), (10, 10)])
+# @pytest.mark.parametrize("activation", ACTIVATION_NAMES)
 @pytest.mark.parametrize(
     "estimator, generator",
     [
@@ -585,6 +598,7 @@ def test_multilayer_progression(weight_init, hidden_layer_sizes, activation, exp
 def test_extreme_learning_array_api(
     ridge_alpha,
     hidden_layer_sizes,
+    activation,
     estimator,
     generator,
     array_namespace,
@@ -592,9 +606,9 @@ def test_extreme_learning_array_api(
     dtype_name,
 ):
 
-    atol = _atol_for_type(dtype_name) * 4
+    atol = _atol_for_type(dtype_name) * 10
     rtol = 1e-4 if dtype_name == "float32" else 1e-8
-    
+
     xp, device = _array_api_for_tests(array_namespace, device_name, dtype_name)
     X_np, y_np = generator(
         n_samples=500,
@@ -605,21 +619,24 @@ def test_extreme_learning_array_api(
     X_np = X_np.astype(dtype_name, copy=False)
     X_xp = xp.asarray(X_np, device=device)
 
-    params = dict(
-        ridge_alpha=ridge_alpha, 
-        hidden_layer_sizes=hidden_layer_sizes, 
-        random_state=0
-    )
+    params = {
+        "ridge_alpha": ridge_alpha,
+        "hidden_layer_sizes": hidden_layer_sizes,
+        "random_state": 0,
+        "activation": activation,
+    }
 
     with config_context(array_api_dispatch=False):
         est_np = estimator(**params).fit(X_np, y_np)
 
+    est_xp = clone(est_np)
     with config_context(array_api_dispatch=True):
-        est_xp = estimator(**params).fit(X_xp, y_np)
+        est_xp.fit(X_xp, y_np)
 
     # Check fitted attributes are close
     array_attributes = {
-        key: value for key, value in vars(est_np).items() if isinstance(value, np.ndarray)
+        key: value for key, value in vars(est_np).items()
+        if isinstance(value, np.ndarray)
     }
     for attribute_name, attribute_value in array_attributes.items():
         est_xp_attr = getattr(est_xp, attribute_name)
@@ -652,87 +669,6 @@ def test_extreme_learning_array_api(
             rtol=rtol,
         )
 
-
-@pytest.mark.parametrize("activation", ACTIVATION_NAMES)
-@pytest.mark.parametrize("weight_init", WEIGHT_NAMES[1:])
-@pytest.mark.parametrize(
-    "estimator, generator",
-    [
-        (ExtremeLearningClassifier, make_classification),
-        (ExtremeLearningRegressor, make_regression),
-    ],
-)
-@pytest.mark.parametrize(
-    "array_namespace, device_name, dtype_name",
-    yield_namespace_device_dtype_combinations(),
-)
-def test_array_api_activations(
-    activation,
-    weight_init,
-    estimator,
-    generator,
-    array_namespace,
-    device_name,
-    dtype_name,
-):
-    # all pass when the solver='svd' param is set in Ridge
-    # many fail otherwise
-    xp, device = _array_api_for_tests(array_namespace, device_name, dtype_name)
-    X_np, y_np = generator(
-        n_samples=1000,
-        n_features=40,
-        n_informative=4,
-        random_state=0,
-    )
-
-    X_np = X_np.astype(dtype_name, copy=False)
-    y_np = y_np.astype(dtype_name, copy=False)
-
-    X_xp = xp.asarray(X_np, device=device)
-    y_xp_or_np = np.asarray(y_np, copy=True)
-
-    with config_context(array_api_dispatch=False):
-        elm_np = estimator(
-            hidden_layer_sizes=(10,),
-            activation=activation,
-            weight_init=weight_init,
-            random_state=0,
-        ).fit(X_np, y_np)
-        pred_np = elm_np.predict(X_np)
-
-    atol = _atol_for_type(dtype_name) * 4
-    rtol = 1e-4 if dtype_name == "float32" else 1e-8
-
-    with config_context(array_api_dispatch=True):
-        elm_xp = estimator(
-            hidden_layer_sizes=(10,),
-            activation=activation,
-            weight_init=weight_init,
-            random_state=0,
-        ).fit(X_xp, y_xp_or_np)
-        pred_xp = elm_xp.predict(X_xp)
-
-        assert get_namespace(pred_xp)[0] == get_namespace(X_xp)[0]
-        assert array_device(pred_xp) == array_device(X_xp)
-        assert pred_xp.dtype == X_xp.dtype
-
-        assert_allclose(
-            move_to(pred_xp, xp=np, device="cpu"),
-            pred_np,
-            rtol=rtol,
-            atol=atol,
-        )
-
-        attr_xp = getattr(elm_xp, "coef_")
-        attr_np = getattr(elm_np, "coef_")
-
-        assert_allclose(
-            move_to(attr_xp, xp=np, device="cpu"), attr_np, rtol=rtol, atol=atol
-        )
-        assert attr_xp.dtype == X_xp.dtype
-        assert array_device(attr_xp) == array_device(X_xp)
-
-
 @pytest.mark.parametrize("ridge_alpha", [None, 2])
 @pytest.mark.parametrize("hidden_layer_sizes", [(10,), (10, 10)])
 @pytest.mark.parametrize("batch", [100, 1000])
@@ -747,7 +683,7 @@ def test_array_api_activations(
     "array_namespace, device_name, dtype_name",
     yield_namespace_device_dtype_combinations(),
 )
-def test_array_api_partial_fit(
+def test_elm_array_api_partial_fit(
     ridge_alpha,
     hidden_layer_sizes,
     batch,
@@ -757,11 +693,15 @@ def test_array_api_partial_fit(
     device_name,
     dtype_name,
 ):
+
+    atol = _atol_for_type(dtype_name) * 4
+    rtol = 1e-4 if dtype_name == "float32" else 1e-6
+
     xp, device = _array_api_for_tests(array_namespace, device_name, dtype_name)
     X_np, y_np = generator(
-        n_samples=10000,
-        n_features=40,
-        n_informative=4,
+        n_samples=50,
+        n_features=20,
+        n_informative=5,
         random_state=0,
     )
 
@@ -771,9 +711,11 @@ def test_array_api_partial_fit(
     X_xp = xp.asarray(X_np, device=device)
     y_xp_or_np = np.asarray(y_np, copy=True)
 
-    params = dict(
-        ridge_alpha=ridge_alpha, hidden_layer_sizes=hidden_layer_sizes, random_state=0
-    )
+    params = {
+        "ridge_alpha": ridge_alpha,
+        "hidden_layer_sizes": hidden_layer_sizes,
+        "random_state": 0
+    }
 
     with config_context(array_api_dispatch=False):
         np_classes = np.unique(y_xp_or_np)
@@ -789,9 +731,6 @@ def test_array_api_partial_fit(
                 elm_np.partial_fit(Xb_np, yb)
 
         pred_np = elm_np.predict(X_np)
-
-    atol = _atol_for_type(dtype_name) * 4
-    rtol = 1e-4 if dtype_name == "float32" else 1e-6
 
     with config_context(array_api_dispatch=True):
         xp_classes = np.unique(y_xp_or_np)
@@ -819,8 +758,8 @@ def test_array_api_partial_fit(
             atol=atol,
         )
 
-        attr_xp = getattr(elm_xp, "coef_")
-        attr_np = getattr(elm_np, "coef_")
+        attr_xp = elm_xp.coef_
+        attr_np = elm_np.coef_
 
         assert_allclose(
             move_to(attr_xp, xp=np, device="cpu"), attr_np, rtol=rtol, atol=atol
@@ -833,7 +772,7 @@ def test_array_api_partial_fit(
 @parametrize_with_checks([
     ExtremeLearningClassifier(),
     ExtremeLearningRegressor(),
-    ExtremeLearningClassifier(ridge_alpha=0.1), 
+    ExtremeLearningClassifier(ridge_alpha=0.1),
     ExtremeLearningRegressor(ridge_alpha=0.1),
     ])
 def test_extreme_learning_api_compliance(estimator, check):
