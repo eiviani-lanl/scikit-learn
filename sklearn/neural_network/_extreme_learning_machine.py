@@ -193,9 +193,7 @@ class ExtremeLearningBase(BaseEstimator, ABC):
                 # )
             )
 
-    @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y):
-        self._validate_params()
         xp, _, device_ = get_namespace_and_device(
             X,
         )
@@ -252,7 +250,6 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         # It's evident that it is indeed possible to update normal equations
         # through summation
 
-        self._validate_params()
         xp, _, device_ = get_namespace_and_device(
             X,
         )
@@ -542,6 +539,7 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
             rtol=rtol,
         )
 
+    @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y):
         """Fit the model to data matrix X and target(s) y.
 
@@ -587,6 +585,7 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
         super().fit(X, y)
         return self
 
+    @_fit_context(prefer_skip_nested_validation=True)
     def partial_fit(self, X, y, classes=None):
         """Update the model with a subset of the given data.
 
@@ -971,6 +970,7 @@ class ExtremeLearningRegressor(RegressorMixin, MultiOutputMixin, ExtremeLearning
             rtol=rtol,
         )
 
+    @_fit_context(prefer_skip_nested_validation=True)
     def fit(self, X, y):
         """Fit the model to data matrix X and target(s) y.
 
@@ -1008,6 +1008,7 @@ class ExtremeLearningRegressor(RegressorMixin, MultiOutputMixin, ExtremeLearning
         super().fit(X, y)
         return self
 
+    @_fit_context(prefer_skip_nested_validation=True)
     def partial_fit(self, X, y):
         """Update the model with a subset of the given data.
 
