@@ -656,14 +656,14 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
         # shape: (n_samples, n_features)
         xp, _, device_ = get_namespace_and_device(X)
 
-        if not hasattr(self, "classes_"):
+        first_call = not hasattr(self, "classes_")
+        if first_call:
             if classes is None:
                 raise TypeError("Classes must not be None for first partial_fit call")
             dtype = [xp.float64, xp.float32]
 
         else:
             W_xp, _, W_device_ = get_namespace_and_device(self.W_[0])
-
             if (xp != W_xp) or (device_ != W_device_):
                 raise ValueError(
                     "All batches must use same device and namespace , %r, "
@@ -676,7 +676,7 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
             X,
             y,
             dtype=dtype,
-            reset=not hasattr(self, "n_features_in_"),
+            reset=first_call,
         )
 
         y = column_or_1d(y, warn=True)
@@ -684,7 +684,7 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
 
         y_xp, _, y_device_ = get_namespace_and_device(y)
 
-        if not hasattr(self, "classes_"):
+        if first_call:
             if _is_numpy_namespace(y_xp):
                 classes = move_to(classes, xp=y_xp, device=y_device_)
                 classes = y_xp.asarray(classes, device=y_device_)
@@ -1094,12 +1094,11 @@ class ExtremeLearningRegressor(RegressorMixin, MultiOutputMixin, ExtremeLearning
         # shape: (n_samples, n_features)
         xp, _, device_ = get_namespace_and_device(X)
 
-        if not hasattr(self, "n_features_in_"):
+        first_call = not hasattr(self, "n_features_in_")
+        if first_call:
             dtype = [xp.float64, xp.float32]
-
         else:
             W_xp, _, W_device_ = get_namespace_and_device(self.W_[0])
-
             if (xp != W_xp) or (device_ != W_device_):
                 raise ValueError(
                     "All batches must use same device and namespace , %r, "
@@ -1112,7 +1111,7 @@ class ExtremeLearningRegressor(RegressorMixin, MultiOutputMixin, ExtremeLearning
             X,
             y,
             dtype=dtype,
-            reset=not hasattr(self, "n_features_in_"),
+            reset=first_call,
             y_numeric=True,
         )
 
