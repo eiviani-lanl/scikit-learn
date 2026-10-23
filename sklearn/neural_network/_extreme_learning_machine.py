@@ -20,12 +20,10 @@ from sklearn.neural_network._base import ACTIVATIONS, WEIGHTS
 from sklearn.preprocessing import LabelBinarizer
 from sklearn.utils import column_or_1d
 from sklearn.utils._array_api import (
-    _is_numpy_namespace,
     check_same_namespace,
     get_namespace,
     get_namespace_and_device,
     move_to,
-    size,
 )
 from sklearn.utils._param_validation import Interval, StrOptions
 from sklearn.utils.multiclass import check_classification_targets, unique_labels
@@ -562,7 +560,6 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
         """
         # shape: (n_samples, n_features)
         xp, _, device_ = get_namespace_and_device(X)
-        y_xp, _, _ = get_namespace_and_device(y)
 
         X, y = validate_data(
             self,
@@ -574,34 +571,20 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
         y = column_or_1d(y, warn=True)
         check_classification_targets(y)
 
-        if _is_numpy_namespace(y_xp):
-            self._label_binarizer = LabelBinarizer().fit(y)
-            self.classes_ = self._label_binarizer.classes_
+        self._label_binarizer = LabelBinarizer(sparse_output=False)
+        y = self._label_binarizer.fit_transform(y)
+        self.classes_ = self._label_binarizer.classes_
+        if self.classes_.shape[0] < 2:
+            raise ValueError("y must contain more than 1 class.")
 
-            y_encoded = self._label_binarizer.transform(y)
+        y = move_to(y, xp=xp, device=device_)
+        y = xp.astype(y, X.dtype, copy=False)
 
-            if y_encoded.shape[1] == 1 and size(self.classes_) == 2:
-                y_encoded = np.concatenate([1 - y_encoded, y_encoded], axis=1)
+        # Preserve two output columns for binary classification.
+        if self.classes_.shape[0] == 2:
+            y = xp.concat((1 - y, y), axis=1)
 
-            y_encoded = move_to(y_encoded, xp=xp, device=device_)
-            y_encoded = xp.astype(y_encoded, X.dtype, copy=False)
-
-        else:
-            if y.ndim == 2 and y.shape[1] == 1:
-                y = y_xp.reshape(y, (-1,))
-
-            # Keep classes_ in y's original namespace and device.
-            self.classes_ = y_xp.sort(y_xp.unique_values(y))
-
-            matches = y_xp.expand_dims(y, axis=1) == y_xp.expand_dims(
-                self.classes_, axis=0
-            )
-
-            # Move only the numeric/boolean encoded target to X's namespace.
-            y_encoded = move_to(matches, xp=xp, device=device_)
-            y_encoded = xp.astype(y_encoded, X.dtype, copy=False)
-
-        super().fit(X, y_encoded)
+        super().fit(X, y)
         return self
 
     def partial_fit(self, X, y, classes=None):
@@ -685,42 +668,31 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
         y_xp, _, y_device_ = get_namespace_and_device(y)
 
         if first_call:
-            if _is_numpy_namespace(y_xp):
-                classes = move_to(classes, xp=y_xp, device=y_device_)
-                classes = y_xp.asarray(classes, device=y_device_)
-                self._label_binarizer = LabelBinarizer().fit(classes)
-                self.classes_ = self._label_binarizer.classes_
+            classes = move_to(classes, xp=y_xp, device=y_device_)
+            self._label_binarizer = LabelBinarizer(sparse_output=False).fit(classes)
+            self.classes_ = self._label_binarizer.classes_
+            if self.classes_.shape[0] < 2:
+                raise ValueError("classes must contain more than 1 class")
 
-            else:
-                if y.ndim == 2 and y.shape[1] == 1:
-                    y = y_xp.reshape(y, (-1,))
-                classes = move_to(classes, xp=y_xp, device=y_device_)
-                self.classes_ = y_xp.sort(y_xp.unique_values(classes))
-
-        if _is_numpy_namespace(y_xp):
-            if not set(unique_labels(y)) <= set(self.classes_):
-                raise ValueError(
-                    "Expected only labels in classes_ = %r, "
-                    "but got %r." % (list(self.classes_), unique_labels(y))
-                )
-            y = self._label_binarizer.transform(y)
-
-            if y.shape[1] == 1 and size(self.classes_) == 2:
-                y = np.hstack([1 - y, y])
-        else:
-            matches = y_xp.expand_dims(y, axis=1) == y_xp.expand_dims(
-                self.classes_, axis=0
+        # Check membership without Python sets or converting labels to NumPy.
+        classes_xp, _, classes_device = get_namespace_and_device(self.classes_)
+        y = move_to(y, xp=classes_xp, device=classes_device)
+        matches = y_xp.expand_dims(y, axis=1) == y_xp.expand_dims(
+            self.classes_, axis=0
+        )
+        if not y_xp.all(y_xp.any(matches, axis=1)):
+            raise ValueError(
+                "Expected only labels in classes_ = %r, but got %r."
+                % (self.classes_, unique_labels(y))
             )
-            if not y_xp.all(y_xp.any(matches, axis=1)):
-                raise ValueError(
-                    "Expected only labels in classes_ = %r, "
-                    "but got %r." % (list(self.classes_), unique_labels(y))
-                )
-            y = matches
 
+        y = self._label_binarizer.transform(y)
         y = move_to(y, xp=xp, device=device_)
-
         y = xp.astype(y, X.dtype, copy=False)
+
+        # Preserve two output columns for binary classification.
+        if self.classes_.shape[0] == 2:
+            y = xp.concat((1 - y, y), axis=1)
         super().partial_fit(X, y)
         return self
 
@@ -753,29 +725,16 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
             dtype=[xp.float64, xp.float32],
         )
 
-        if size(self.classes_) == 1:
-            label = move_to(self.classes_[:1], xp=xp, device=device_)
-            return xp.broadcast_to(label, (X.shape[0],))
-
         out = self._predict_proba(X)
         indices = xp.argmax(out, axis=1)
 
         classes_xp, _, classes_device = get_namespace_and_device(self.classes_)
-
-        indices = move_to(
-            indices,
-            xp=classes_xp,
-            device=classes_device,
-        )
+        indices = move_to(indices, xp=classes_xp, device=classes_device)
         y_pred = classes_xp.take(self.classes_, indices, axis=0)
 
         if isinstance(y_pred[0], str):
             return y_pred
-        return move_to(
-            y_pred,
-            xp=xp,
-            device=device_,
-        )
+        return move_to(y_pred, xp=xp, device=device_)
 
     def predict_proba(self, X):
         """Probability estimates.
