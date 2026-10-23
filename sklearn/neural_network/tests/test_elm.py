@@ -18,11 +18,9 @@ from sklearn.neural_network._base import ACTIVATIONS, WEIGHTS
 from sklearn.preprocessing import MinMaxScaler, OneHotEncoder, StandardScaler
 from sklearn.utils._array_api import (
     _atol_for_type,
-    get_namespace,
     move_to,
     yield_namespace_device_dtype_combinations,
 )
-from sklearn.utils._array_api import device as array_device
 from sklearn.utils._testing import (
     skip_if_array_api_compat_not_configured,
 )
