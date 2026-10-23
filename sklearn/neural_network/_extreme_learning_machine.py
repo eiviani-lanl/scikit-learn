@@ -267,10 +267,6 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         # design matrix shape: (n_samples, sum_hidden+n_features)
         # or (n_samples, sum_hidden)
         D = self._design_matrix(X)
-        # Store accumulated Gram and moment matrices in float64 to reduce
-        # rounding error across batch updates
-        # This limits the devices we support, so we'll need to decide if
-        # accuracy is worth it
         if not hasattr(self, "A"):
             self.A = xp.zeros(
                 (D.shape[1], D.shape[1]), dtype=X.dtype, device=device_
