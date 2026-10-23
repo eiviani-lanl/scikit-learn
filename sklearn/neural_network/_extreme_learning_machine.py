@@ -115,15 +115,6 @@ class ExtremeLearningBase(BaseEstimator, ABC):
                 dtype=X.dtype,
                 device=device_,
             )
-            # xp.astype(
-            #     move_to(
-            #     self._weight_mode(self.n_features_in_, hidden_layer_sizes[0], rng=rng),
-            #     xp=xp,
-            #     device=device_
-            #     ),
-            #     X.dtype,
-            #     copy=False,
-            # )
         )
         self.b_.append(
             xp.asarray(
@@ -131,15 +122,6 @@ class ExtremeLearningBase(BaseEstimator, ABC):
                 dtype=X.dtype,
                 device=device_,
             )
-            # xp.astype(
-            #     move_to(
-            #     self._weight_mode(1, hidden_layer_sizes[0], rng=rng).reshape(-1),
-            #     xp=xp,
-            #     device=device_
-            #     ),
-            #     X.dtype,
-            #     copy=False,
-            # )
         )
         for i, layer in enumerate(hidden_layer_sizes[1:]):
             # (n_hidden, n_features)
@@ -153,19 +135,6 @@ class ExtremeLearningBase(BaseEstimator, ABC):
                     dtype=X.dtype,
                     device=device_,
                 )
-                # xp.astype(
-                #     move_to(
-                #     self._weight_mode(
-                #                     hidden_layer_sizes[i],
-                #                     layer,
-                #                     rng=rng,
-                #                     ),
-                #     xp=xp,
-                #     device=device_
-                #     ),
-                #     X.dtype,
-                #     copy=False,
-                # )
             )
             # (n_hidden,)
             self.b_.append(
@@ -178,19 +147,6 @@ class ExtremeLearningBase(BaseEstimator, ABC):
                     dtype=X.dtype,
                     device=device_,
                 )
-                # xp.astype(
-                #     move_to(
-                #     self._weight_mode(
-                #         1,
-                #         layer,
-                #         rng=rng,
-                #     ).reshape(-1),
-                #     xp=xp,
-                #     device=device_
-                #     ),
-                #     X.dtype,
-                #     copy=False,
-                # )
             )
 
     def fit(self, X, y):
