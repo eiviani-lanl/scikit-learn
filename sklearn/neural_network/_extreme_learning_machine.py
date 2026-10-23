@@ -509,7 +509,7 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
             Returns the trained gradient free neural network.
         """
         # shape: (n_samples, n_features)
-        xp, _, device_ = get_namespace_and_device(X)
+        xp, _, _ = get_namespace_and_device(X)
 
         X, y = validate_data(
             self,
@@ -527,12 +527,10 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
         if self.classes_.shape[0] < 2:
             raise ValueError("y must contain more than 1 class.")
 
-        y = move_to(y, xp=xp, device=device_)
-        y = xp.astype(y, X.dtype, copy=False)
-
         # Preserve two output columns for binary classification.
+        xp_y, _ = get_namespace(y)
         if self.classes_.shape[0] == 2:
-            y = xp.concat((1 - y, y), axis=1)
+            y = xp_y.concat((1 - y, y), axis=1)
 
         super().fit(X, y)
         return self
@@ -616,9 +614,8 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
         y = column_or_1d(y, warn=True)
         check_classification_targets(y)
 
-        xp_y, _, device_y_ = get_namespace_and_device(y)
-
         if first_call:
+            xp_y, _, device_y_ = get_namespace_and_device(y)
             classes = move_to(classes, xp=xp_y, device=device_y_)
             self._label_binarizer = LabelBinarizer(sparse_output=False).fit(classes)
             self.classes_ = self._label_binarizer.classes_
@@ -626,8 +623,8 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
                 raise ValueError("classes must contain more than 1 class")
 
         # Check membership without Python sets or converting labels to NumPy.
-        xp_classes, _, device_classes = get_namespace_and_device(self.classes_)
-        y = move_to(y, xp=xp_classes, device=device_classes)
+        xp_y, _, device_y = get_namespace_and_device(self.classes_)
+        y = move_to(y, xp=xp_y, device=device_y)
         matches = xp_y.expand_dims(y, axis=1) == xp_y.expand_dims(
             self.classes_, axis=0
         )
@@ -638,12 +635,10 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
             )
 
         y = self._label_binarizer.transform(y)
-        y = move_to(y, xp=xp, device=device_)
-        y = xp.astype(y, X.dtype, copy=False)
 
         # Preserve two output columns for binary classification.
         if self.classes_.shape[0] == 2:
-            y = xp.concat((1 - y, y), axis=1)
+            y = xp_y.concat((1 - y, y), axis=1)
         super().partial_fit(X, y)
         return self
 
