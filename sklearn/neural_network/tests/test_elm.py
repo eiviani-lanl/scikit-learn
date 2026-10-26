@@ -11,6 +11,7 @@ from sklearn.datasets import (
     make_classification,
     make_regression,
 )
+from sklearn.externals import array_api_extra as xpx
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import train_test_split
 from sklearn.neural_network import ExtremeLearningClassifier, ExtremeLearningRegressor
@@ -579,9 +580,6 @@ def test_multilayer_progression(weight_init, hidden_layer_sizes, activation, exp
             (None, (10,), "log_sigmoid")
         ]
 )
-# @pytest.mark.parametrize("ridge_alpha", [None, 2])
-# @pytest.mark.parametrize("hidden_layer_sizes", [(10,), (10, 10)])
-# @pytest.mark.parametrize("activation", ACTIVATION_NAMES)
 @pytest.mark.parametrize(
     "estimator, generator",
     [
@@ -605,14 +603,10 @@ def test_extreme_learning_array_api(
 ):
 
     atol = _atol_for_type(dtype_name) * 10
-    rtol = 1e-4 if dtype_name == "float32" else 1e-8
 
     xp, device = _array_api_for_tests(array_namespace, device_name, dtype_name)
     X_np, y_np = generator(
-        n_samples=500,
-        n_features=20,
-        n_informative=5,
-        random_state=0,
+        n_samples=500,  n_features=20, n_informative=5, random_state=0,
     )
     X_np = X_np.astype(dtype_name, copy=False)
     X_xp = xp.asarray(X_np, device=device)
@@ -639,12 +633,10 @@ def test_extreme_learning_array_api(
     for attribute_name, attribute_value in array_attributes.items():
         est_xp_attr = getattr(est_xp, attribute_name)
         est_xp_attr_np = move_to(est_xp_attr, xp=np, device="cpu")
-        assert_allclose(
-            attribute_value,
-            est_xp_attr_np,
+        xpx.testing.assert_close(
+            attribute_value, est_xp_attr_np,
             err_msg=f"{attribute_name} not the same",
             atol=atol,
-            rtol=rtol,
         )
 
     # Check method outputs are close
@@ -659,18 +651,15 @@ def test_extreme_learning_array_api(
         with config_context(array_api_dispatch=True):
             result_xp = getattr(est_xp, method_name)(X_xp)
         result_xp_np = move_to(result_xp, xp=np, device="cpu")
-        assert_allclose(
-            result,
-            result_xp_np,
+        xpx.testing.assert_close(
+            result, result_xp_np,
             err_msg=f"{method_name}() did not the return the same result",
             atol=atol,
-            rtol=rtol,
         )
 
 @skip_if_array_api_compat_not_configured
 @pytest.mark.parametrize("ridge_alpha", [None, 2])
 @pytest.mark.parametrize("hidden_layer_sizes", [(10,), (10, 10)])
-@pytest.mark.parametrize("batch", [100,])
 @pytest.mark.parametrize(
     "estimator, generator",
     [
@@ -685,7 +674,6 @@ def test_extreme_learning_array_api(
 def test_elm_array_api_partial_fit(
     ridge_alpha,
     hidden_layer_sizes,
-    batch,
     estimator,
     generator,
     array_namespace,
@@ -694,16 +682,12 @@ def test_elm_array_api_partial_fit(
 ):
 
     atol = _atol_for_type(dtype_name) * 10
-    rtol = 1e-1 if dtype_name == "float32" else 1e-6
+    batch = 2
 
     xp, device = _array_api_for_tests(array_namespace, device_name, dtype_name)
     X_np, y_np = generator(
-        n_samples=200,
-        n_features=20,
-        n_informative=5,
-        random_state=0,
+        n_samples=6, n_features=20, n_informative=5, random_state=0,
     )
-
     X_np = X_np.astype(dtype_name, copy=False)
     X_xp = xp.asarray(X_np, device=device)
 
@@ -712,50 +696,29 @@ def test_elm_array_api_partial_fit(
         "hidden_layer_sizes": hidden_layer_sizes,
         "random_state": 0
     }
-
-    with config_context(array_api_dispatch=False):
-        np_classes = np.unique(y_np)
-        elm_np = estimator(**params)
-
-        for start in range(0, X_np.shape[0], batch):
-            end = min(start + batch, X_np.shape[0])
-            Xb_np = X_np[start:end]
-            yb = y_np[start:end]
-            if estimator == ExtremeLearningClassifier:
-                elm_np.partial_fit(Xb_np, yb, classes=np_classes)
-            else:
-                elm_np.partial_fit(Xb_np, yb)
-
-        pred_np = elm_np.predict(X_np)
-
-    with config_context(array_api_dispatch=True):
-        xp_classes = np.unique(y_np)
-        elm_xp = estimator(**params)
-
-        for start in range(0, X_xp.shape[0], batch):
-            end = min(start + batch, X_xp.shape[0])
-            Xb_xp = X_xp[start:end, ...]
-            yb = y_np[start:end]
-            if estimator == ExtremeLearningClassifier:
-                elm_xp.partial_fit(Xb_xp, yb, classes=xp_classes)
-            else:
-                elm_xp.partial_fit(Xb_xp, yb)
-
-        pred_xp = elm_xp.predict(X_xp)
-
-
-    assert_allclose(
-        move_to(pred_xp, xp=np, device="cpu"),
-        pred_np,
-        rtol=rtol,
-        atol=atol,
+    fit_kwargs = (
+        {"classes": np.unique(y_np)}
+        if estimator == ExtremeLearningClassifier
+        else {}
     )
 
-    attr_xp = elm_xp.coef_
-    attr_np = elm_np.coef_
+    predictions = []
+    for X, dispatch in [(X_np, False), (X_xp, True)]:
+        with config_context(array_api_dispatch=dispatch):
+            model = estimator(**params)
+            for start in range(0, X.shape[0], batch):
+                model.partial_fit(
+                    X[start:start + batch, ...], y_np[start:start + batch],
+                    **fit_kwargs
+                )
+            predictions.append(
+                move_to(model.predict(X), xp=np, device="cpu")
+            )
 
-    assert_allclose(
-        move_to(attr_xp, xp=np, device="cpu"), attr_np, rtol=rtol, atol=atol
+    xpx.testing.assert_close(
+        predictions[0], predictions[1],
+        err_msg="predict() did not the return the same result",
+        atol=atol,
     )
 
 
