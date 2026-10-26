@@ -591,7 +591,7 @@ def test_multilayer_progression(weight_init, hidden_layer_sizes, activation, exp
     "array_namespace, device_name, dtype_name",
     yield_namespace_device_dtype_combinations(),
 )
-def test_extreme_learning_array_api(
+def test_elm_array_api_fit(
     ridge_alpha,
     hidden_layer_sizes,
     activation,
@@ -729,5 +729,5 @@ def test_elm_array_api_partial_fit(
     ExtremeLearningClassifier(ridge_alpha=0.1),
     ExtremeLearningRegressor(ridge_alpha=0.1),
     ])
-def test_extreme_learning_api_compliance(estimator, check):
+def test_elm_api_compliance(estimator, check):
     check(estimator)
