@@ -109,29 +109,12 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         self.b_ = []
         rng = self._get_generator(self.random_state)
 
-        self.W_.append(
-            xp.asarray(
-                self._weight_mode(self.n_features_in_, hidden_layer_sizes[0], rng=rng),
-                dtype=X.dtype,
-                device=device_,
-            )
-        )
-        self.b_.append(
-            xp.asarray(
-                self._weight_mode(1, hidden_layer_sizes[0], rng=rng).reshape(-1),
-                dtype=X.dtype,
-                device=device_,
-            )
-        )
-        for i, layer in enumerate(hidden_layer_sizes[1:]):
+        in_sizes = np.concatenate(([self.n_features_in_], hidden_layer_sizes[:-1]))
+        for n_in, n_out in zip(in_sizes, hidden_layer_sizes):
             # (n_hidden, n_features)
             self.W_.append(
                 xp.asarray(
-                    self._weight_mode(
-                        hidden_layer_sizes[i],
-                        layer,
-                        rng=rng,
-                    ),
+                    self._weight_mode(n_in, n_out, rng=rng),
                     dtype=X.dtype,
                     device=device_,
                 )
@@ -139,11 +122,7 @@ class ExtremeLearningBase(BaseEstimator, ABC):
             # (n_hidden,)
             self.b_.append(
                 xp.asarray(
-                    self._weight_mode(
-                        1,
-                        layer,
-                        rng=rng,
-                    ).reshape(-1),
+                    self._weight_mode(1, n_out, rng=rng).reshape(-1),
                     dtype=X.dtype,
                     device=device_,
                 )
@@ -170,10 +149,7 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         # If ridge_alpha is None, use direct solve using
         # MoorePenrose Pseudo-Inverse, otherwise use ridge regularized form.
         if self.ridge_alpha is None:
-            if self.rtol is None:
-                self.coef_ = xp.linalg.pinv(D) @ y
-            else:
-                self.coef_ = xp.linalg.pinv(D, rtol=self.rtol) @ y
+            self.coef_ = xp.linalg.pinv(D, rtol=self.rtol) @ y
         else:
             ridge = Ridge(alpha=self.ridge_alpha, solver="svd", fit_intercept=False)
             ridge.fit(D, y)
@@ -253,10 +229,7 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         # = (D.T @ D)^-1 @ D.T @ y
 
         if self.ridge_alpha is None:
-            if self.rtol is None:
-                self.coef_ = xp.linalg.pinv(self.A) @ self.B
-            else:
-                self.coef_ = xp.linalg.pinv(self.A, rtol=self.rtol) @ self.B
+            self.coef_ = xp.linalg.pinv(self.A, rtol=self.rtol) @ self.B
         else:
             # xp.linalg.solve(self.A + reg_mat, self.B)
             # is equivalent to
@@ -656,12 +629,7 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
             The predicted classes.
         """
         check_is_fitted(self)
-        check_same_namespace(
-            X,
-            self,
-            attribute="coef_",
-            method="predict",
-        )
+        check_same_namespace(X, self, attribute="coef_", method="predict")
         xp, _, device_ = get_namespace_and_device(X)
 
         X = validate_data(
@@ -697,12 +665,7 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
             model, where classes are ordered as they are in `self.classes_`.
         """
         check_is_fitted(self)
-        check_same_namespace(
-            X,
-            self,
-            attribute="coef_",
-            method="predict_proba",
-        )
+        check_same_namespace(X, self, attribute="coef_", method="predict_proba")
         xp, _ = get_namespace(X)
 
         X = validate_data(
@@ -1048,12 +1011,7 @@ class ExtremeLearningRegressor(RegressorMixin, MultiOutputMixin, ExtremeLearning
             The predicted values.
         """
         check_is_fitted(self)
-        check_same_namespace(
-            X,
-            self,
-            attribute="coef_",
-            method="predict",
-        )
+        check_same_namespace(X, self, attribute="coef_", method="predict")
         xp, _ = get_namespace(X)
 
         X = validate_data(self, X, reset=False, dtype=[xp.float64, xp.float32])
