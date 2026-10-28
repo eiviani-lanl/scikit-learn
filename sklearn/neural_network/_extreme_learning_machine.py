@@ -129,12 +129,8 @@ class ExtremeLearningBase(BaseEstimator, ABC):
             )
 
     def fit(self, X, y):
-        xp, _, device_ = get_namespace_and_device(
-            X,
-        )
+        xp, _, _ = get_namespace_and_device(X)
 
-        y = move_to(y, xp=xp, device=device_)
-        y = xp.astype(y, X.dtype, copy=False)
         # Assumption : X, Y have been pre-processed.
         # X shape: (n_samples, n_features)
         # Y shape: (n_samples, n_classes)
@@ -182,12 +178,8 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         # It's evident that it is indeed possible to update normal equations
         # through summation
 
-        xp, _, device_ = get_namespace_and_device(
-            X,
-        )
+        xp, _, device_ = get_namespace_and_device(X)
 
-        y = move_to(y, xp=xp, device=device_)
-        y = xp.astype(y, X.dtype, copy=False)
         # Assumption : X, Y have been pre-processed.
         # X shape: (n_samples, n_features)
         # Y shape: (n_samples, n_classes-1)
@@ -482,7 +474,7 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
             Returns the trained gradient free neural network.
         """
         # shape: (n_samples, n_features)
-        xp, _, _ = get_namespace_and_device(X)
+        xp, _, device_ = get_namespace_and_device(X)
 
         X, y = validate_data(
             self,
@@ -496,14 +488,15 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
 
         self._label_binarizer = LabelBinarizer(sparse_output=False)
         y = self._label_binarizer.fit_transform(y)
+        y = move_to(y, xp=xp, device=device_)
+        y = xp.astype(y, X.dtype, copy=False)
         self.classes_ = self._label_binarizer.classes_
         if self.classes_.shape[0] < 2:
             raise ValueError("y must contain more than 1 class.")
 
         # Preserve two output columns for binary classification.
-        xp_y, _ = get_namespace(y)
         if self.classes_.shape[0] == 2:
-            y = xp_y.concat((1 - y, y), axis=1)
+            y = xp.concat((1 - y, y), axis=1)
 
         super().fit(X, y)
         return self
@@ -568,11 +561,11 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
             dtype = [xp.float64, xp.float32]
 
         else:
-            xp_W, _, device_W_ = get_namespace_and_device(self.W_[0])
-            if (xp != xp_W) or (device_ != device_W_):
+            xp_W, _, device_W = get_namespace_and_device(self.W_[0])
+            if (xp != xp_W) or (device_ != device_W):
                 raise ValueError(
-                    "All batches must use same device and namespace , %r, "
-                    "but got %r." % ((xp_W, device_W_), (xp, device_))
+                    f"All batches must use same device and namespace , "
+                    f"{(xp_W, device_W)!r}, but got {(xp, device_)!r}."
                 )
             dtype = self.W_[0].dtype
 
@@ -588,30 +581,30 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
         check_classification_targets(y)
 
         if first_call:
-            xp_y, _, device_y_ = get_namespace_and_device(y)
-            classes = move_to(classes, xp=xp_y, device=device_y_)
             self._label_binarizer = LabelBinarizer(sparse_output=False).fit(classes)
             self.classes_ = self._label_binarizer.classes_
             if self.classes_.shape[0] < 2:
                 raise ValueError("classes must contain more than 1 class")
 
         # Check membership without Python sets or converting labels to NumPy.
-        xp_y, _, device_y = get_namespace_and_device(self.classes_)
-        y = move_to(y, xp=xp_y, device=device_y)
-        matches = xp_y.expand_dims(y, axis=1) == xp_y.expand_dims(
+        xp_classes, _, device_classes = get_namespace_and_device(self.classes_)
+        y = move_to(y, xp=xp_classes, device=device_classes)
+        matches = xp_classes.expand_dims(y, axis=1) == xp_classes.expand_dims(
             self.classes_, axis=0
         )
-        if not xp_y.all(xp_y.any(matches, axis=1)):
+        if not xp_classes.all(xp_classes.any(matches, axis=1)):
             raise ValueError(
-                "Expected only labels in classes_ = %r, but got %r."
-                % (self.classes_, unique_labels(y))
+                f"Expected only labels in classes_ = {self.classes_!r}, "
+                f"but got {unique_labels(y)!r}."
             )
 
         y = self._label_binarizer.transform(y)
+        y = move_to(y, xp=xp, device=device_)
+        y = xp.astype(y, X.dtype, copy=False)
 
         # Preserve two output columns for binary classification.
         if self.classes_.shape[0] == 2:
-            y = xp_y.concat((1 - y, y), axis=1)
+            y = xp.concat((1 - y, y), axis=1)
         super().partial_fit(X, y)
         return self
 
@@ -641,7 +634,6 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
 
         out = self._predict_proba(X)
         indices = xp.argmax(out, axis=1)
-
         xp_classes, _, device_classes = get_namespace_and_device(self.classes_)
         indices = move_to(indices, xp=xp_classes, device=device_classes)
         y_pred = xp_classes.take(self.classes_, indices, axis=0)
@@ -911,8 +903,6 @@ class ExtremeLearningRegressor(RegressorMixin, MultiOutputMixin, ExtremeLearning
         y = move_to(y, xp=xp, device=device_)
         y = xp.astype(y, X.dtype, copy=False)
 
-        if y.ndim == 2 and y.shape[1] == 1:
-            y = column_or_1d(y, warn=True)
         if y.ndim == 1:
             y = xp.expand_dims(y, axis=-1)
         super().fit(X, y)
@@ -968,11 +958,11 @@ class ExtremeLearningRegressor(RegressorMixin, MultiOutputMixin, ExtremeLearning
         if first_call:
             dtype = [xp.float64, xp.float32]
         else:
-            xp_W, _, device_W_ = get_namespace_and_device(self.W_[0])
-            if (xp != xp_W) or (device_ != device_W_):
+            xp_W, _, device_W = get_namespace_and_device(self.W_[0])
+            if (xp != xp_W) or (device_ != device_W):
                 raise ValueError(
-                    "All batches must use same device and namespace , %r, "
-                    "but got %r." % ((xp_W, device_W_), (xp, device_))
+                    f"All batches must use same device and namespace , "
+                    f"{(xp_W, device_W)!r}, but got {(xp, device_)!r}."
                 )
             dtype = self.W_[0].dtype
 
@@ -982,18 +972,15 @@ class ExtremeLearningRegressor(RegressorMixin, MultiOutputMixin, ExtremeLearning
             y,
             dtype=dtype,
             reset=first_call,
+            multi_output=True,
             y_numeric=True,
         )
 
-        y = column_or_1d(y, warn=True)
-
-        xp_y, _ = get_namespace(y)
-
-        y = xp_y.expand_dims(y, axis=1)
-
         y = move_to(y, xp=xp, device=device_)
-
         y = xp.astype(y, X.dtype, copy=False)
+        if y.ndim == 1:
+            y = xp.expand_dims(y, axis=-1)
+
         super().partial_fit(X, y)
         return self
 

@@ -30,7 +30,7 @@ from sklearn.utils.estimator_checks import (
     parametrize_with_checks,
 )
 
-ACTIVATION_NAMES = [name for name in ACTIVATIONS.keys() if name != "exp"]
+ACTIVATION_NAMES = [name for name in ACTIVATIONS if name != "exp"]
 WEIGHT_NAMES = list(WEIGHTS.keys())
 
 
