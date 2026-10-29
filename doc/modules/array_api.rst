@@ -170,6 +170,8 @@ Estimators
 - :class:`linear_model.RidgeClassifierCV` (see :ref:`device_support_for_float64`)
 - :class:`discriminant_analysis.LinearDiscriminantAnalysis` (with `solver="svd"`)
 - :class:`naive_bayes.GaussianNB`
+- :class:`neural_network.ExtremeLearningClassifier`
+- :class:`neural_network.ExtremeLearningRegressor`
 - :class:`preprocessing.Binarizer`
 - :class:`preprocessing.KernelCenterer`
 - :class:`preprocessing.LabelBinarizer` (with `sparse_output=False`)
