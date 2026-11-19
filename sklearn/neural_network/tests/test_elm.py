@@ -190,6 +190,21 @@ def test_lls_regression(activation, direct_links):
     assert elm.score(X, y) > 0.73
 
 
+def test_partial_fit_rejects_ridge_alphas():
+    X, y = make_regression(n_samples=20, n_features=5, random_state=0)
+
+    elm = ExtremeLearningRegressor(
+        hidden_layer_sizes=(10,),
+        random_state=0,
+        ridge_alphas=(0.1, 1.0, 10.0),
+    )
+
+    with pytest.raises(ValueError, match="partial_fit.*ridge_alphas"):
+        elm.partial_fit(X, y)
+
+    assert not hasattr(elm, "W_")
+
+
 @pytest.mark.parametrize("hidden_layer_sizes", [(10,), (5, 5)])
 @pytest.mark.parametrize("direct_links", [True, False])
 @pytest.mark.parametrize("n_classes", [2, 5])
@@ -569,15 +584,16 @@ def test_multilayer_progression(weight_init, hidden_layer_sizes, activation, exp
 
 @skip_if_array_api_compat_not_configured
 @pytest.mark.parametrize(
-    "ridge_alpha, hidden_layer_sizes, activation",
+    "ridge_alpha, ridge_alphas, hidden_layer_sizes, activation",
     [
-        (2, (10,), "relu"),
-        (2, (10, 10), "logistic"),
-        (2, (10,), "softmax"),
-        (2, (10,), "tanh"),
-        (None, (10,), "softmin"),
-        (None, (10, 10), "log_softmax"),
-        (None, (10,), "log_sigmoid"),
+        (2, None, (10,), "relu"),
+        (2, None, (10, 10), "logistic"),
+        (2, None, (10,), "softmax"),
+        (2, None, (10,), "tanh"),
+        (None, None, (10,), "softmin"),
+        (None, None, (10, 10), "log_softmax"),
+        (None, None, (10,), "log_sigmoid"),
+        (None, (0.1, 1.0, 10.0), (10,), "relu"),
     ],
 )
 @pytest.mark.parametrize(
@@ -593,6 +609,7 @@ def test_multilayer_progression(weight_init, hidden_layer_sizes, activation, exp
 )
 def test_elm_array_api_fit(
     ridge_alpha,
+    ridge_alphas,
     hidden_layer_sizes,
     activation,
     estimator,
@@ -615,6 +632,7 @@ def test_elm_array_api_fit(
 
     params = {
         "ridge_alpha": ridge_alpha,
+        "ridge_alphas": ridge_alphas,
         "hidden_layer_sizes": hidden_layer_sizes,
         "random_state": 0,
         "activation": activation,
