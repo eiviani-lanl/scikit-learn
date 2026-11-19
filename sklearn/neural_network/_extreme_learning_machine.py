@@ -15,7 +15,7 @@ from sklearn.base import (
     RegressorMixin,
     _fit_context,
 )
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import Ridge, RidgeCV
 from sklearn.neural_network._base import ACTIVATIONS, WEIGHTS
 from sklearn.preprocessing import LabelBinarizer
 from sklearn.utils import column_or_1d
@@ -71,6 +71,7 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         "direct_links": ["boolean"],
         "random_state": ["random_state"],
         "ridge_alpha": [Interval(Real, None, None, closed="left"), None],
+        "ridge_alphas": ["array-like", None],
         "rtol": [Interval(Real, None, None, closed="left"), None],
     }
 
@@ -83,6 +84,7 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         direct_links=False,
         random_state=None,
         ridge_alpha=None,
+        ridge_alphas=None,
         rtol=None,
     ):
         self.hidden_layer_sizes = hidden_layer_sizes
@@ -91,6 +93,7 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         self.random_state = random_state
         self.weight_init = weight_init
         self.ridge_alpha = ridge_alpha
+        self.ridge_alphas = ridge_alphas
         self.rtol = rtol
 
     def _initialize(self, X):
@@ -144,10 +147,28 @@ class ExtremeLearningBase(BaseEstimator, ABC):
 
         # If ridge_alpha is None, use direct solve using
         # MoorePenrose Pseudo-Inverse, otherwise use ridge regularized form.
-        if self.ridge_alpha is None:
+        if self.ridge_alphas is not None:
+            # if an array is passed in, use ridgecv
+            ridge = RidgeCV(
+                alphas=self.ridge_alphas,
+                fit_intercept=False,
+                gcv_mode="svd",
+            )
+            ridge.fit(D, y)
+            if ridge.coef_.ndim == 1:
+                self.coef_ = ridge.coef_
+            else:
+                self.coef_ = ridge.coef_.T
+
+        elif self.ridge_alpha is None:
             self.coef_ = xp.linalg.pinv(D, rtol=self.rtol) @ y
+
         else:
-            ridge = Ridge(alpha=self.ridge_alpha, solver="svd", fit_intercept=False)
+            ridge = Ridge(
+                alpha=self.ridge_alpha,
+                fit_intercept=False,
+                solver="svd",
+            )
             ridge.fit(D, y)
             if ridge.coef_.ndim == 1:
                 self.coef_ = ridge.coef_
@@ -177,6 +198,12 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         #
         # It's evident that it is indeed possible to update normal equations
         # through summation
+
+        if self.ridge_alphas is not None:
+            raise ValueError(
+                "`partial_fit` requires a fixed `ridge_alpha`; tuning over "
+                "`ridge_alphas` is only supported by `fit`."
+            )
 
         xp, _, device_ = get_namespace_and_device(X)
 
@@ -440,6 +467,7 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
         direct_links=False,
         random_state=None,
         ridge_alpha=None,
+        ridge_alphas=None,
         rtol=None,
     ):
         super().__init__(
@@ -449,6 +477,7 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
             direct_links=direct_links,
             random_state=random_state,
             ridge_alpha=ridge_alpha,
+            ridge_alphas=ridge_alphas,
             rtol=rtol,
         )
 
@@ -856,6 +885,7 @@ class ExtremeLearningRegressor(RegressorMixin, MultiOutputMixin, ExtremeLearning
         direct_links=False,
         random_state=None,
         ridge_alpha=None,
+        ridge_alphas=None,
         rtol=None,
     ):
         super().__init__(
@@ -865,6 +895,7 @@ class ExtremeLearningRegressor(RegressorMixin, MultiOutputMixin, ExtremeLearning
             direct_links=direct_links,
             random_state=random_state,
             ridge_alpha=ridge_alpha,
+            ridge_alphas=ridge_alphas,
             rtol=rtol,
         )
 
