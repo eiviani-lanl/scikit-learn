@@ -70,9 +70,9 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         ],
         "direct_links": ["boolean"],
         "random_state": ["random_state"],
-        "ridge_alpha": [Interval(Real, None, None, closed="left"), None],
-        "ridge_alphas": ["array-like", None],
-        "rtol": [Interval(Real, None, None, closed="left"), None],
+        "ridge_alpha": [Interval(Real, 0, None, closed="left"), None],
+        "ridge_cv_alphas": ["array-like", None],
+        "rtol": [Interval(Real, 0, None, closed="left"), None],
     }
 
     @abstractmethod
@@ -84,7 +84,7 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         direct_links=False,
         random_state=None,
         ridge_alpha=None,
-        ridge_alphas=None,
+        ridge_cv_alphas=None,
         rtol=None,
     ):
         self.hidden_layer_sizes = hidden_layer_sizes
@@ -93,8 +93,33 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         self.random_state = random_state
         self.weight_init = weight_init
         self.ridge_alpha = ridge_alpha
-        self.ridge_alphas = ridge_alphas
+        self.ridge_cv_alphas = ridge_cv_alphas
         self.rtol = rtol
+
+    def _check_ridge_params(self, *, allow_cv):
+        if self.ridge_alpha is not None and self.ridge_cv_alphas is not None:
+            raise ValueError(
+                "`ridge_alpha` and `ridge_cv_alphas` cannot both be set; pass "
+                "`ridge_alpha` for a fixed penalty or `ridge_cv_alphas` to select "
+                "one via cross-validation."
+            )
+        if not allow_cv and self.ridge_cv_alphas is not None:
+            raise ValueError(
+                "`partial_fit` does not support selecting `ridge_cv_alphas` via "
+                "cross-validation; pass a single value via `ridge_alpha`"
+            )
+        if self.ridge_cv_alphas is not None:
+            alphas = np.asarray(self.ridge_cv_alphas, dtype=float)
+            if alphas.size == 0:
+                raise ValueError(
+                    "`ridge_cv_alphas` must contain at least one candidate value, "
+                    "got an empty sequence."
+                )
+            if not np.all(np.isfinite(alphas)):
+                raise ValueError(
+                    "`ridge_cv_alphas` must contain only finite values, got "
+                    f"{self.ridge_cv_alphas!r}."
+                )
 
     def _initialize(self, X):
         # set all attributes, initialize weights etc. for first call
@@ -132,6 +157,7 @@ class ExtremeLearningBase(BaseEstimator, ABC):
             )
 
     def fit(self, X, y):
+        self._check_ridge_params(allow_cv=True)
         xp, _, _ = get_namespace_and_device(X)
 
         # Assumption : X, Y have been pre-processed.
@@ -147,10 +173,9 @@ class ExtremeLearningBase(BaseEstimator, ABC):
 
         # If ridge_alpha is None, use direct solve using
         # MoorePenrose Pseudo-Inverse, otherwise use ridge regularized form.
-        if self.ridge_alphas is not None:
-            # if an array is passed in, use ridgecv
+        if self.ridge_cv_alphas is not None:
             ridge = RidgeCV(
-                alphas=self.ridge_alphas,
+                alphas=list(self.ridge_cv_alphas),
                 fit_intercept=False,
                 gcv_mode="svd",
             )
@@ -159,9 +184,11 @@ class ExtremeLearningBase(BaseEstimator, ABC):
                 self.coef_ = ridge.coef_
             else:
                 self.coef_ = ridge.coef_.T
+            self.alpha_ = ridge.alpha_
 
         elif self.ridge_alpha is None:
             self.coef_ = xp.linalg.pinv(D, rtol=self.rtol) @ y
+            self.alpha_ = None
 
         else:
             ridge = Ridge(
@@ -174,6 +201,7 @@ class ExtremeLearningBase(BaseEstimator, ABC):
                 self.coef_ = ridge.coef_
             else:
                 self.coef_ = ridge.coef_.T
+            self.alpha_ = self.ridge_alpha
         if self.coef_.ndim == 2 and self.coef_.shape[1] == 1:
             self.coef_ = xp.squeeze(self.coef_, axis=1)
         return self
@@ -199,11 +227,7 @@ class ExtremeLearningBase(BaseEstimator, ABC):
         # It's evident that it is indeed possible to update normal equations
         # through summation
 
-        if self.ridge_alphas is not None:
-            raise ValueError(
-                "`partial_fit` requires a fixed `ridge_alpha`; tuning over "
-                "`ridge_alphas` is only supported by `fit`."
-            )
+        self._check_ridge_params(allow_cv=False)
 
         xp, _, device_ = get_namespace_and_device(X)
 
@@ -245,6 +269,7 @@ class ExtremeLearningBase(BaseEstimator, ABC):
 
         if self.ridge_alpha is None:
             self.coef_ = xp.linalg.pinv(self.A, rtol=self.rtol) @ self.B
+            self.alpha_ = None
         else:
             # xp.linalg.solve(self.A + reg_mat, self.B)
             # is equivalent to
@@ -258,6 +283,7 @@ class ExtremeLearningBase(BaseEstimator, ABC):
             )
 
             self.coef_ = xp.linalg.solve(self.A + ridge_mat, self.B)
+            self.alpha_ = self.ridge_alpha
 
         self.coef_ = xp.astype(self.coef_, X.dtype)
         if self.coef_.ndim == 2 and self.coef_.shape[1] == 1:
@@ -381,6 +407,13 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
         conditioning during Ridge regression. When set to zero or `None`,
         model uses direct solve using Moore-Penrose Pseudo-Inverse.
 
+    ridge_cv_alphas : array-like, default=None
+        Candidate ridge penalties to select from via generalized
+        cross-validation (:class:`~sklearn.linear_model.RidgeCV`), in place of
+        the single fixed penalty given by `ridge_alpha`. Cannot be set at the
+        same time as `ridge_alpha`, and is only supported by :term:`fit`, not
+        :term:`partial_fit`. The selected value is exposed as `alpha_`.
+
     rtol : float, default=None
         Cutoff for small singular values for the Moore-Penrose pseudo-inverse. Only
         applies when `ridge_alpha=None`. When set to `None`, the `numpy.linalg.pinv`
@@ -410,6 +443,12 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
         Output weight matrix learned by closed-form solver on the
         design matrix (least-squares solution via Moore-Penrose pseudo-inverse,
         or ridge regression when `ridge_alpha` is set).
+
+    alpha_ : float or None
+        The ridge penalty actually used to compute `coef_`: the
+        cross-validation-selected value when `ridge_cv_alphas` is set, the
+        fixed `ridge_alpha` when that is set instead, or `None` when neither
+        is set and the Moore-Penrose pseudo-inverse was used.
 
     See Also
     --------
@@ -467,7 +506,7 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
         direct_links=False,
         random_state=None,
         ridge_alpha=None,
-        ridge_alphas=None,
+        ridge_cv_alphas=None,
         rtol=None,
     ):
         super().__init__(
@@ -477,7 +516,7 @@ class ExtremeLearningClassifier(ClassifierMixin, ExtremeLearningBase):
             direct_links=direct_links,
             random_state=random_state,
             ridge_alpha=ridge_alpha,
-            ridge_alphas=ridge_alphas,
+            ridge_cv_alphas=ridge_cv_alphas,
             rtol=rtol,
         )
 
@@ -802,6 +841,13 @@ class ExtremeLearningRegressor(RegressorMixin, MultiOutputMixin, ExtremeLearning
         conditioning during Ridge regression. When set to zero or `None`,
         model uses direct solve using Moore-Penrose Pseudo-Inverse.
 
+    ridge_cv_alphas : array-like, default=None
+        Candidate ridge penalties to select from via generalized
+        cross-validation (:class:`~sklearn.linear_model.RidgeCV`), in place of
+        the single fixed penalty given by `ridge_alpha`. Cannot be set at the
+        same time as `ridge_alpha`, and is only supported by :term:`fit`, not
+        :term:`partial_fit`. The selected value is exposed as `alpha_`.
+
     rtol : float, default=None
         Cutoff for small singular values for the Moore-Penrose pseudo-inverse. Only
         applies when `ridge_alpha=None`. When set to `None`, the `numpy.linalg.pinv`
@@ -828,6 +874,12 @@ class ExtremeLearningRegressor(RegressorMixin, MultiOutputMixin, ExtremeLearning
         Output weight matrix learned by closed-form solver on the
         design matrix (least-squares solution via Moore-Penrose pseudo-inverse,
         or ridge regression when `ridge_alpha` is set).
+
+    alpha_ : float or None
+        The ridge penalty actually used to compute `coef_`: the
+        cross-validation-selected value when `ridge_cv_alphas` is set, the
+        fixed `ridge_alpha` when that is set instead, or `None` when neither
+        is set and the Moore-Penrose pseudo-inverse was used.
 
     See Also
     --------
@@ -885,7 +937,7 @@ class ExtremeLearningRegressor(RegressorMixin, MultiOutputMixin, ExtremeLearning
         direct_links=False,
         random_state=None,
         ridge_alpha=None,
-        ridge_alphas=None,
+        ridge_cv_alphas=None,
         rtol=None,
     ):
         super().__init__(
@@ -895,7 +947,7 @@ class ExtremeLearningRegressor(RegressorMixin, MultiOutputMixin, ExtremeLearning
             direct_links=direct_links,
             random_state=random_state,
             ridge_alpha=ridge_alpha,
-            ridge_alphas=ridge_alphas,
+            ridge_cv_alphas=ridge_cv_alphas,
             rtol=rtol,
         )
 

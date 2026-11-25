@@ -190,19 +190,214 @@ def test_lls_regression(activation, direct_links):
     assert elm.score(X, y) > 0.73
 
 
-def test_partial_fit_rejects_ridge_alphas():
+def test_partial_fit_rejects_ridge_cv_alphas():
     X, y = make_regression(n_samples=20, n_features=5, random_state=0)
 
     elm = ExtremeLearningRegressor(
         hidden_layer_sizes=(10,),
         random_state=0,
-        ridge_alphas=(0.1, 1.0, 10.0),
+        ridge_cv_alphas=(0.1, 1.0, 10.0),
     )
 
-    with pytest.raises(ValueError, match="partial_fit.*ridge_alphas"):
+    with pytest.raises(ValueError, match=r"partial_fit.*ridge_cv_alphas"):
         elm.partial_fit(X, y)
 
     assert not hasattr(elm, "W_")
+
+
+@pytest.mark.parametrize(
+    "estimator_cls, generator",
+    [
+        (ExtremeLearningClassifier, make_classification),
+        (ExtremeLearningRegressor, make_regression),
+    ],
+)
+def test_fit_rejects_ridge_alpha_and_ridge_cv_alphas(estimator_cls, generator):
+    X, y = generator(n_samples=20, n_features=5, random_state=0)
+
+    elm = estimator_cls(
+        hidden_layer_sizes=(10,),
+        random_state=0,
+        ridge_alpha=0.5,
+        ridge_cv_alphas=(0.1, 1.0, 10.0),
+    )
+
+    with pytest.raises(ValueError, match=r"ridge_alpha.*ridge_cv_alphas"):
+        elm.fit(X, y)
+
+    assert not hasattr(elm, "W_")
+
+
+def test_ridgecv_single_alpha():
+    # A single-candidate `ridge_cv_alphas` should still route through RidgeCV
+    # rather than silently behaving like an unregularized fit.
+    X, y = make_regression(n_samples=50, n_features=5, random_state=0)
+
+    elm = ExtremeLearningRegressor(
+        hidden_layer_sizes=(10,),
+        random_state=0,
+        ridge_cv_alphas=(1.0,),
+    )
+    elm.fit(X, y)
+
+    assert elm.alpha_ == 1.0
+    assert elm.coef_.shape == (10,)
+
+
+def test_ridgecv_classification():
+    X, y = make_classification(
+        n_samples=200, n_features=10, n_classes=3, n_informative=8, random_state=0
+    )
+    ridge_cv_alphas = (0.01, 0.1, 1.0, 10.0)
+
+    model = ExtremeLearningClassifier(
+        hidden_layer_sizes=(20,),
+        random_state=0,
+        ridge_cv_alphas=ridge_cv_alphas,
+    )
+    model.fit(X, y)
+
+    assert model.alpha_ in ridge_cv_alphas
+    assert model.coef_.shape == (20, 3)
+    actual = model.score(X, y)
+    assert_allclose(actual, 0.695)
+
+
+def test_ridgecv_regression():
+    X, y = make_regression(
+        n_samples=200, n_features=10, n_informative=5, noise=30.0, random_state=0
+    )
+    ridge_cv_alphas = (0.01, 0.1, 1.0, 10.0, 100.0)
+
+    model = ExtremeLearningRegressor(
+        hidden_layer_sizes=(20,),
+        random_state=0,
+        ridge_cv_alphas=ridge_cv_alphas,
+    )
+    model.fit(X, y)
+
+    assert model.alpha_ in ridge_cv_alphas
+    assert model.coef_.shape == (20,)
+    actual = model.score(X, y)
+    assert_allclose(actual, 0.8690048106096049)
+
+
+@pytest.mark.parametrize("ridge_cv_alphas", [(), []])
+@pytest.mark.parametrize(
+    "estimator_cls, generator",
+    [
+        (ExtremeLearningClassifier, make_classification),
+        (ExtremeLearningRegressor, make_regression),
+    ],
+)
+def test_ridgecv_rejects_empty_alphas(estimator_cls, generator, ridge_cv_alphas):
+    X, y = generator(n_samples=20, n_features=5, random_state=0)
+    elm = estimator_cls(
+        hidden_layer_sizes=(10,), random_state=0, ridge_cv_alphas=ridge_cv_alphas
+    )
+
+    with pytest.raises(ValueError, match=r"ridge_cv_alphas.*empty"):
+        elm.fit(X, y)
+
+
+@pytest.mark.parametrize(
+    "ridge_cv_alphas",
+    [
+        (float("nan"),),
+        (float("inf"),),
+        (0.1, float("nan")),
+        (0.1, float("inf")),
+    ],
+)
+@pytest.mark.parametrize(
+    "estimator_cls, generator",
+    [
+        (ExtremeLearningClassifier, make_classification),
+        (ExtremeLearningRegressor, make_regression),
+    ],
+)
+def test_ridgecv_rejects_non_finite_alphas(estimator_cls, generator, ridge_cv_alphas):
+    X, y = generator(n_samples=20, n_features=5, random_state=0)
+    elm = estimator_cls(
+        hidden_layer_sizes=(10,), random_state=0, ridge_cv_alphas=ridge_cv_alphas
+    )
+
+    with pytest.raises(ValueError, match=r"ridge_cv_alphas.*finite"):
+        elm.fit(X, y)
+
+
+@pytest.mark.parametrize(
+    "ridge_alpha", [-1.0, float("-inf"), float("inf"), float("nan")]
+)
+@pytest.mark.parametrize(
+    "estimator_cls, generator",
+    [
+        (ExtremeLearningClassifier, make_classification),
+        (ExtremeLearningRegressor, make_regression),
+    ],
+)
+def test_ridge_alpha_rejects_invalid_values(estimator_cls, generator, ridge_alpha):
+    X, y = generator(n_samples=20, n_features=5, random_state=0)
+    elm = estimator_cls(
+        hidden_layer_sizes=(10,), random_state=0, ridge_alpha=ridge_alpha
+    )
+
+    with pytest.raises(ValueError, match=r"ridge_alpha"):
+        elm.fit(X, y)
+
+
+@pytest.mark.parametrize("rtol", [-1.0, float("-inf"), float("inf"), float("nan")])
+@pytest.mark.parametrize(
+    "estimator_cls, generator",
+    [
+        (ExtremeLearningClassifier, make_classification),
+        (ExtremeLearningRegressor, make_regression),
+    ],
+)
+def test_rtol_rejects_invalid_values(estimator_cls, generator, rtol):
+    X, y = generator(n_samples=20, n_features=5, random_state=0)
+    elm = estimator_cls(hidden_layer_sizes=(10,), random_state=0, rtol=rtol)
+
+    with pytest.raises(ValueError, match=r"rtol"):
+        elm.fit(X, y)
+
+
+def test_ridgecv_multioutput_regression():
+    # Locks in the `ridge.coef_.T` shape path for multi-output targets,
+    # which the single-output RidgeCV tests above don't exercise.
+    X, y = make_regression(n_samples=100, n_features=10, n_targets=3, random_state=0)
+    ridge_cv_alphas = (0.1, 1.0, 10.0)
+
+    model = ExtremeLearningRegressor(
+        hidden_layer_sizes=(10,), random_state=0, ridge_cv_alphas=ridge_cv_alphas
+    )
+    model.fit(X, y)
+
+    assert model.alpha_ in ridge_cv_alphas
+    assert model.coef_.shape == (10, 3)
+    actual = model.score(X, y)
+    assert_allclose(actual, 0.9053853953756775)
+
+
+def test_ridgecv_binary_classification():
+    # Locks in the RidgeCV path for binary targets, whose one-hot
+    # encoding produces two perfectly anti-correlated columns.
+    X, y = make_classification(
+        n_samples=100, n_features=10, n_classes=2, random_state=0
+    )
+    ridge_cv_alphas = (0.1, 1.0, 10.0)
+
+    model = ExtremeLearningClassifier(
+        hidden_layer_sizes=(10,), random_state=0, ridge_cv_alphas=ridge_cv_alphas
+    )
+    model.fit(X, y)
+
+    assert model.alpha_ in ridge_cv_alphas
+    assert model.coef_.shape == (10, 2)
+    actual = model.score(X, y)
+    assert_allclose(actual, 0.89)
+    pred = model.predict(X[:5])
+    assert np.isin(pred, [0, 1]).all()
 
 
 @pytest.mark.parametrize("hidden_layer_sizes", [(10,), (5, 5)])
@@ -582,41 +777,8 @@ def test_multilayer_progression(weight_init, hidden_layer_sizes, activation, exp
     assert_allclose(actual_auc, exp_auc, rtol=1e-2, atol=5e-3)
 
 
-@skip_if_array_api_compat_not_configured
-@pytest.mark.parametrize(
-    "ridge_alpha, ridge_alphas, hidden_layer_sizes, activation",
-    [
-        (2, None, (10,), "relu"),
-        (2, None, (10, 10), "logistic"),
-        (2, None, (10,), "softmax"),
-        (2, None, (10,), "tanh"),
-        (None, None, (10,), "softmin"),
-        (None, None, (10, 10), "log_softmax"),
-        (None, None, (10,), "log_sigmoid"),
-        (None, (0.1, 1.0, 10.0), (10,), "relu"),
-    ],
-)
-@pytest.mark.parametrize(
-    "estimator, generator",
-    [
-        (ExtremeLearningClassifier, make_classification),
-        (ExtremeLearningRegressor, make_regression),
-    ],
-)
-@pytest.mark.parametrize(
-    "array_namespace, device_name, dtype_name",
-    yield_namespace_device_dtype_combinations(),
-)
-def test_elm_array_api_fit(
-    ridge_alpha,
-    ridge_alphas,
-    hidden_layer_sizes,
-    activation,
-    estimator,
-    generator,
-    array_namespace,
-    device_name,
-    dtype_name,
+def _assert_array_api_fit_equivalence(
+    estimator, generator, params, array_namespace, device_name, dtype_name
 ):
     atol = _atol_for_type(dtype_name) * 10
 
@@ -629,14 +791,6 @@ def test_elm_array_api_fit(
     )
     X_np = X_np.astype(dtype_name, copy=False)
     X_xp = xp.asarray(X_np, device=device)
-
-    params = {
-        "ridge_alpha": ridge_alpha,
-        "ridge_alphas": ridge_alphas,
-        "hidden_layer_sizes": hidden_layer_sizes,
-        "random_state": 0,
-        "activation": activation,
-    }
 
     with config_context(array_api_dispatch=False):
         est_np = estimator(**params).fit(X_np, y_np)
@@ -679,6 +833,90 @@ def test_elm_array_api_fit(
             err_msg=f"{method_name}() did not the return the same result",
             atol=atol,
         )
+
+
+@skip_if_array_api_compat_not_configured
+@pytest.mark.parametrize(
+    "ridge_alpha, hidden_layer_sizes, activation",
+    [
+        (2, (10,), "relu"),
+        (2, (10, 10), "logistic"),
+        (2, (10,), "softmax"),
+        (2, (10,), "tanh"),
+        (None, (10,), "softmin"),
+        (None, (10, 10), "log_softmax"),
+        (None, (10,), "log_sigmoid"),
+    ],
+)
+@pytest.mark.parametrize(
+    "estimator, generator",
+    [
+        (ExtremeLearningClassifier, make_classification),
+        (ExtremeLearningRegressor, make_regression),
+    ],
+)
+@pytest.mark.parametrize(
+    "array_namespace, device_name, dtype_name",
+    yield_namespace_device_dtype_combinations(),
+)
+def test_elm_array_api_fit(
+    ridge_alpha,
+    hidden_layer_sizes,
+    activation,
+    estimator,
+    generator,
+    array_namespace,
+    device_name,
+    dtype_name,
+):
+    params = {
+        "ridge_alpha": ridge_alpha,
+        "hidden_layer_sizes": hidden_layer_sizes,
+        "random_state": 0,
+        "activation": activation,
+    }
+    _assert_array_api_fit_equivalence(
+        estimator, generator, params, array_namespace, device_name, dtype_name
+    )
+
+
+@skip_if_array_api_compat_not_configured
+@pytest.mark.parametrize(
+    "ridge_cv_alphas, hidden_layer_sizes",
+    [
+        ((0.1, 1.0, 10.0), (10,)),
+        ((0.1, 1.0, 10.0), (10, 10)),
+        ((0.2, 2.0, 20.0), (20, 20)),
+    ],
+)
+@pytest.mark.parametrize(
+    "estimator, generator",
+    [
+        (ExtremeLearningClassifier, make_classification),
+        (ExtremeLearningRegressor, make_regression),
+    ],
+)
+@pytest.mark.parametrize(
+    "array_namespace, device_name, dtype_name",
+    yield_namespace_device_dtype_combinations(),
+)
+def test_elm_array_api_fit_ridgecv(
+    ridge_cv_alphas,
+    hidden_layer_sizes,
+    estimator,
+    generator,
+    array_namespace,
+    device_name,
+    dtype_name,
+):
+    params = {
+        "ridge_cv_alphas": ridge_cv_alphas,
+        "hidden_layer_sizes": hidden_layer_sizes,
+        "random_state": 0,
+    }
+    _assert_array_api_fit_equivalence(
+        estimator, generator, params, array_namespace, device_name, dtype_name
+    )
 
 
 @skip_if_array_api_compat_not_configured
@@ -746,6 +984,20 @@ def test_elm_array_api_partial_fit(
     )
 
 
+def _elm_expected_failed_checks(estimator):
+    if estimator.ridge_cv_alphas is not None:
+        reason = (
+            "`partial_fit` does not support `ridge_cv_alphas`; tuning over a "
+            "candidate grid via cross-validation is only supported by `fit`."
+        )
+        return {
+            "check_estimators_partial_fit_n_features": reason,
+            "check_fit_score_takes_y": reason,
+            "check_n_features_in_after_fitting": reason,
+        }
+    return {}
+
+
 @skip_if_array_api_compat_not_configured
 @parametrize_with_checks(
     [
@@ -753,7 +1005,10 @@ def test_elm_array_api_partial_fit(
         ExtremeLearningRegressor(),
         ExtremeLearningClassifier(ridge_alpha=0.1),
         ExtremeLearningRegressor(ridge_alpha=0.1),
-    ]
+        ExtremeLearningClassifier(ridge_cv_alphas=(0.1, 1.0)),
+        ExtremeLearningRegressor(ridge_cv_alphas=(0.1, 1.0)),
+    ],
+    expected_failed_checks=_elm_expected_failed_checks,
 )
 def test_elm_api_compliance(estimator, check):
     check(estimator)
